@@ -1,13 +1,7 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
-    "buildCommand": "npm run build",
-    "watchPatterns": [
-      "apps/mcp/**",
-      "package.json",
-      "pnpm-workspace.yaml",
-      "pnpm-lock.yaml"
-    ]
+    "buildCommand": "pnpm run build"
   },
   "deploy": {
     "startCommand": "node dist/main.js",

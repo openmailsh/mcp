@@ -2,7 +2,7 @@
 
 Hosted Streamable HTTP MCP at `https://mcp.openmail.sh/mcp`. Gmail for agents: one inbox, read human mail, reply in-thread.
 
-This service lives in the private monorepo until GitHub App access exists for `openmailsh/mcp`. There is **no local stdio catalog** — old clients should use `mcp-remote`.
+There is **no local stdio catalog** — stdio-only clients should use `mcp-remote`.
 
 ## Connect
 
@@ -35,9 +35,18 @@ Prefer an inbox-scoped key. Read-only: `/mcp/readonly`. One inbox: `/mcp/inbox/{
 | `CONSOLE_ORIGIN` | Consent page host |
 | `PORT` | Listen port |
 
+See `.env.example`.
+
 ## Local
 
 ```
-pnpm --filter openmail-mcp test
-pnpm --filter openmail-mcp dev
+pnpm install
+pnpm test
+pnpm dev
 ```
+
+## Contributing
+
+Open an issue or PR. Run `pnpm typecheck && pnpm test` before pushing.
+
+MIT © OpenMail
