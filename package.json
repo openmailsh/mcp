@@ -1,0 +1,33 @@
+{
+  "name": "openmail-mcp",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Hosted OpenMail MCP server (Gmail for agents)",
+  "type": "module",
+  "engines": {
+    "node": ">=20",
+    "pnpm": "10"
+  },
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "test": "vitest run"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.24.3",
+    "express": "^4.21.2",
+    "jose": "^6.1.3",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.13.5",
+    "@types/supertest": "^6.0.3",
+    "supertest": "^7.1.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.4"
+  }
+}
