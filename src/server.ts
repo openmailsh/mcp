@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { SessionContext, ToolName } from "./session.js";
-import { assertLockedInbox, visibleTools } from "./session.js";
+import { assertLockedInbox, lockedInboxId, visibleTools } from "./session.js";
 import { getDocs, searchDocs } from "./docs.js";
 import { ApiError, type MeResponse, type OpenMailApi } from "./openmail.js";
 import {
@@ -67,8 +67,13 @@ async function resolveInboxId(
   api: OpenMailApi | null,
   requested?: string,
 ): Promise<string> {
-  if (ctx.inboxId) return ctx.inboxId;
-  if (ctx.apiKeyInboxId) return ctx.apiKeyInboxId;
+  const locked = lockedInboxId(ctx);
+  if (locked) {
+    // Never silently substitute: an explicit inbox_id that is not the locked
+    // one is an error, so the caller learns its credential cannot see it.
+    if (requested) assertLockedInbox(ctx, requested);
+    return locked;
+  }
   if (requested) return requested;
   if (!api) throw new Error("Sign in to OpenMail first.");
   const listed = (await api.get("/v1/inboxes?limit=1")) as {

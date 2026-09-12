@@ -1,7 +1,7 @@
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpServer } from "./server.js";
-import { createOpenMailApi, type MeResponse } from "./openmail.js";
+import { ApiError, createOpenMailApi, type MeResponse } from "./openmail.js";
 import { INSTALL_MARKDOWN } from "./format.js";
 import { verifyMcpAccessToken, mcpIssuer, mcpResource } from "./jwt.js";
 import {
@@ -49,43 +49,64 @@ function bearerToken(req: express.Request): string | null {
   return null;
 }
 
-async function resolveAuth(token: string | null): Promise<{
+type ResolvedAuth = {
   ctxAuth: Pick<SessionContext, "token" | "scopes" | "apiKeyInboxId" | "apiKeyPodId" | "authKind">;
   me: MeResponse | null;
+  /** Credential is missing, malformed, revoked, or rejected by the API (401/403). */
   unauthorized: boolean;
-}> {
-  if (!token) {
-    return {
-      ctxAuth: {
-        token: null,
-        scopes: null,
-        apiKeyInboxId: null,
-        apiKeyPodId: null,
-        authKind: "none",
-      },
-      me: null,
-      unauthorized: false,
-    };
-  }
+  /** The API could not tell us who the credential is (5xx / network). */
+  upstreamUnavailable: boolean;
+};
+
+const NO_AUTH: ResolvedAuth["ctxAuth"] = {
+  token: null,
+  scopes: null,
+  apiKeyInboxId: null,
+  apiKeyPodId: null,
+  authKind: "none",
+};
+
+function anonymous(): ResolvedAuth {
+  return { ctxAuth: NO_AUTH, me: null, unauthorized: false, upstreamUnavailable: false };
+}
+
+function rejected(): ResolvedAuth {
+  return { ctxAuth: NO_AUTH, me: null, unauthorized: true, upstreamUnavailable: false };
+}
+
+function unavailable(): ResolvedAuth {
+  return { ctxAuth: NO_AUTH, me: null, unauthorized: false, upstreamUnavailable: true };
+}
+
+/** The API said this credential is not (or no longer) valid. */
+function isCredentialRejection(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 401 || err.status === 403);
+}
+
+function warnMeFailure(kind: string, err: unknown): void {
+  const status = err instanceof ApiError ? err.status : "network";
+  // Never log the token itself.
+  console.warn(`[mcp] GET /v1/me failed for ${kind} credential (${status})`);
+}
+
+async function resolveAuth(token: string | null): Promise<ResolvedAuth> {
+  if (!token) return anonymous();
 
   if (looksLikeJwt(token)) {
     const payload = await verifyMcpAccessToken(token);
-    if (!payload) {
-      return {
-        ctxAuth: {
-          token: null,
-          scopes: null,
-          apiKeyInboxId: null,
-          apiKeyPodId: null,
-          authKind: "none",
-        },
-        me: null,
-        unauthorized: true,
-      };
+    if (!payload) return rejected();
+
+    // A signature that verifies only proves we minted the token; the grant
+    // behind it may since have been revoked. The API is the source of truth.
+    let me: MeResponse | null = null;
+    try {
+      me = (await createOpenMailApi(API_URL, token).get("/v1/me")) as MeResponse;
+    } catch (err) {
+      if (isCredentialRejection(err)) return rejected();
+      // 5xx / network: keep serving with the scopes from the token so a
+      // blip at the API does not force every client back through OAuth.
+      warnMeFailure("oauth", err);
     }
-    const me = (await createOpenMailApi(API_URL, token).get("/v1/me").catch(
-      () => null,
-    )) as MeResponse | null;
     return {
       ctxAuth: {
         token,
@@ -96,22 +117,11 @@ async function resolveAuth(token: string | null): Promise<{
       },
       me,
       unauthorized: false,
+      upstreamUnavailable: false,
     };
   }
 
-  if (!looksLikeApiKey(token)) {
-    return {
-      ctxAuth: {
-        token: null,
-        scopes: null,
-        apiKeyInboxId: null,
-        apiKeyPodId: null,
-        authKind: "none",
-      },
-      me: null,
-      unauthorized: true,
-    };
-  }
+  if (!looksLikeApiKey(token)) return rejected();
 
   try {
     const me = (await createOpenMailApi(API_URL, token).get("/v1/me")) as MeResponse;
@@ -126,19 +136,14 @@ async function resolveAuth(token: string | null): Promise<{
       },
       me,
       unauthorized: false,
+      upstreamUnavailable: false,
     };
-  } catch {
-    return {
-      ctxAuth: {
-        token: null,
-        scopes: null,
-        apiKeyInboxId: null,
-        apiKeyPodId: null,
-        authKind: "none",
-      },
-      me: null,
-      unauthorized: true,
-    };
+  } catch (err) {
+    if (isCredentialRejection(err)) return rejected();
+    // An API key's scope comes only from /v1/me, so without it we cannot
+    // safely serve anything — but that is our outage, not a bad credential.
+    warnMeFailure("api_key", err);
+    return unavailable();
   }
 }
 
@@ -193,6 +198,14 @@ export function createApp(): express.Express {
       res.status(401).json({
         error: "invalid_token",
         error_description: "Invalid or missing OpenMail credential",
+      });
+      return;
+    }
+    if (auth.upstreamUnavailable) {
+      // Not a 401: that would make clients discard a perfectly good key.
+      res.status(503).json({
+        error: "upstream_unavailable",
+        error_description: "OpenMail API is unavailable; retry shortly",
       });
       return;
     }
