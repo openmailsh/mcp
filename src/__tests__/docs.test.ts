@@ -1,6 +1,61 @@
 import { describe, expect, it } from "vitest";
-import { chunkMarkdown, formatSearchResults, isAllowedDocsUrl, rankChunks } from "../docs";
+import {
+  chunkLlmsFull,
+  chunkMarkdown,
+  formatSearchResults,
+  isAllowedDocsUrl,
+  rankChunks,
+} from "../docs";
 import { formatDns, formatInboxes, formatThreads } from "../format";
+
+describe("chunkLlmsFull", () => {
+  const llmsFull = [
+    "# Quickstart",
+    "Source: https://docs.openmail.sh/quickstart",
+    "",
+    "Get your agent an email address.",
+    "",
+    "## Prerequisites",
+    "An API key from the console.",
+    "",
+    "```bash",
+    "# this comment must not start a new page",
+    "openmail inbox create",
+    "```",
+    "",
+    "",
+    "# Verification",
+    "Source: https://docs.openmail.sh/pages/webhooks/verification",
+    "",
+    "## Verify the signature",
+    "Compute HMAC-SHA256 over the payload.",
+  ].join("\n");
+
+  it("builds one chunk per page section with the page's real URL", () => {
+    const chunks = chunkLlmsFull(llmsFull);
+    expect(chunks.map((c) => c.url)).toEqual([
+      "https://docs.openmail.sh/quickstart",
+      "https://docs.openmail.sh/quickstart",
+      "https://docs.openmail.sh/pages/webhooks/verification",
+    ]);
+    expect(chunks[0].title).toBe("Quickstart");
+    expect(chunks[1].title).toBe("Quickstart — Prerequisites");
+    expect(chunks[2].title).toBe("Verification — Verify the signature");
+    expect(chunks[1].text).toContain("this comment must not start a new page");
+  });
+
+  it("cites the page URL, not llms-full.txt, in search results", () => {
+    const ranked = rankChunks(chunkLlmsFull(llmsFull), "verify webhook signature");
+    expect(ranked[0]?.url).toBe("https://docs.openmail.sh/pages/webhooks/verification");
+    expect(formatSearchResults(ranked)).toContain(
+      "Source: https://docs.openmail.sh/pages/webhooks/verification",
+    );
+  });
+
+  it("ignores text without a Source header", () => {
+    expect(chunkLlmsFull("# Orphan page\n\nNo source line here.")).toEqual([]);
+  });
+});
 
 describe("docs ranking", () => {
   it("returns cited chunks for a query", () => {
