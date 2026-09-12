@@ -90,9 +90,12 @@ export function visibleTools(ctx: SessionContext): ToolName[] {
   tools.push("auth_me", "send_mcp_feedback");
 
   const inboxLocked = Boolean(ctx.inboxId || ctx.apiKeyInboxId);
-  if (!inboxLocked) tools.push("setup_agent_email");
 
+  // Setup tools create inboxes / mint keys: writes that need the `setup`
+  // scope and an account-wide view. setup_agent_email wraps both, so it
+  // follows the same rule instead of appearing where it can only fail.
   const canSetup = !ctx.readonly && hasScope(ctx, "setup") && !ctx.apiKeyInboxId;
+  if (canSetup && !inboxLocked) tools.push("setup_agent_email");
   if (canSetup && !ctx.inboxId) tools.push("create_inbox");
   if (canSetup) tools.push("mint_inbox_key");
 

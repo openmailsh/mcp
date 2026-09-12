@@ -147,10 +147,22 @@ async function mcpJwt(scope: string, overrides: { aud?: string; secret?: string 
     .sign(new TextEncoder().encode(overrides.secret ?? MCP_SECRET));
 }
 
+/** A JWT the API still recognises (the grant behind it has not been revoked). */
+async function oauthToken(scope: string) {
+  const token = await mcpJwt(scope);
+  api.state.tokens[token] = {
+    customerId: "cust-1",
+    plan: "developer",
+    apiKeyScope: "account",
+    mcpScopes: scope.split(" "),
+  };
+  return token;
+}
+
 const sorted = (names: readonly string[]) => [...names].sort();
 const without = (names: readonly string[], ...drop: string[]) => sorted(names.filter((n) => !drop.includes(n)));
 
-const WRITE_TOOLS = ["send_email", "reply_to_thread", "mark_thread_read", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain"];
+const WRITE_TOOLS = ["setup_agent_email", "send_email", "reply_to_thread", "mark_thread_read", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain"];
 
 // ---------------------------------------------------------------------------
 // Tool surface per endpoint / credential
@@ -203,14 +215,14 @@ describe("tools/list", () => {
   });
 
   it("a read-only OAuth token keeps mark_thread_read but loses send, setup, and domain writes", async () => {
-    const client = await connect("/mcp", await mcpJwt("read"));
+    const client = await connect("/mcp", await oauthToken("read"));
     expect(await toolNames(client)).toEqual(
-      without(ALL_TOOLS, "send_email", "reply_to_thread", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain"),
+      without(ALL_TOOLS, "setup_agent_email", "send_email", "reply_to_thread", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain"),
     );
   });
 
   it("an OAuth token with every scope matches the account-wide key", async () => {
-    const client = await connect("/mcp", await mcpJwt("read setup send domains"));
+    const client = await connect("/mcp", await oauthToken("read setup send domains"));
     expect(await toolNames(client)).toEqual(sorted(ALL_TOOLS));
   });
 });
@@ -267,13 +279,45 @@ describe("authentication", () => {
   });
 
   it("auth_me on an OAuth session reports the customer the API resolved", async () => {
-    const token = await mcpJwt("read setup");
-    // The API recognises this JWT (as the real one would via the grant).
-    api.state.tokens[token] = api.state.tokens[ACCOUNT_KEY];
-    const client = await connect("/mcp", token);
+    const client = await connect("/mcp", await oauthToken("read setup"));
     const result = await call(client, "auth_me");
     expect(result.isError).toBe(false);
     expect(result.text).toContain("cust-1");
+  });
+
+  it("a validly-signed JWT whose grant the API has revoked is a 401 with resource metadata, not a tools/list", async () => {
+    // Signature verifies, but the API no longer knows the grant → /v1/me is 401.
+    const revoked = await mcpJwt("read setup send domains");
+    const res = await rawInitialize("/mcp", revoked);
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toContain("resource_metadata=");
+    expect((await res.json()).error).toBe("invalid_token");
+    expect(api.calls("GET", /^\/v1\/me$/).map((r) => r.token)).toEqual([revoked]);
+
+    // The real SDK client refuses to connect instead of half-working.
+    await expect(connect("/mcp", revoked)).rejects.toMatchObject({ code: 401 });
+  });
+
+  it("a JWT the API answers with 403 is also unauthorized", async () => {
+    api.state.meFailure = { status: 403, body: { error: "forbidden", message: "Grant disabled" } };
+    const res = await rawInitialize("/mcp", await mcpJwt("read"));
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toContain("resource_metadata=");
+  });
+
+  it("an om_ key is a 503 upstream_unavailable, not a 401, when /v1/me is down", async () => {
+    api.state.meFailure = { status: 503 };
+    const res = await rawInitialize("/mcp", ACCOUNT_KEY);
+    expect(res.status).toBe(503);
+    expect(res.headers.get("www-authenticate")).toBeNull();
+    expect((await res.json()).error).toBe("upstream_unavailable");
+  });
+
+  it("an OAuth token keeps serving from its own scopes when /v1/me is down", async () => {
+    api.state.meFailure = { status: 503 };
+    const client = await connect("/mcp", await mcpJwt("read"));
+    expect(await toolNames(client)).toContain("read_thread");
+    expect(await toolNames(client)).not.toContain("send_email");
   });
 });
 
@@ -311,13 +355,29 @@ describe("inbox lock", () => {
     expect(result.text).not.toContain("Secret from inbox B");
   });
 
-  it("a URL-locked session sends from the locked inbox even if the tool asks for another", async () => {
+  it("a URL-locked session refuses to send from another inbox instead of silently substituting", async () => {
     const client = await connect("/mcp/inbox/inbox-a", ACCOUNT_KEY);
     const result = await call(client, "send_email", {
       to: "x@example.com", subject: "s", body: "b", inbox_id: "inbox-b",
     });
-    expect(result.isError).toBe(false);
-    expect(api.calls("POST", /\/send$/).map((r) => r.path)).toEqual(["/v1/inboxes/inbox-a/send"]);
+    expect(result.isError).toBe(true);
+    expect(result.text).toMatch(/cannot access that inbox/i);
+    expect(api.calls("POST", /\/send$/)).toHaveLength(0);
+  });
+
+  it("an inbox-scoped key asking get_inbox for another inbox gets an error, not the locked inbox", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    const result = await call(client, "get_inbox", { inbox_id: "inbox-b" });
+    expect(result.isError).toBe(true);
+    expect(result.text).toMatch(/cannot access that inbox/i);
+    expect(result.text).not.toContain("a@omail.sh");
+    expect(api.calls("GET", /^\/v1\/inboxes\/inbox-/)).toHaveLength(0);
+  });
+
+  it("a locked session still resolves the locked inbox when inbox_id is omitted or matches", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    expect((await call(client, "get_inbox")).text).toContain("a@omail.sh");
+    expect((await call(client, "get_inbox", { inbox_id: "inbox-a" })).isError).toBe(false);
   });
 });
 

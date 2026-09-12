@@ -83,7 +83,43 @@ describe("visibleTools", () => {
     expect(tools).not.toContain("list_inboxes");
     expect(tools).not.toContain("create_inbox");
     expect(tools).not.toContain("add_domain");
+    expect(tools).not.toContain("setup_agent_email");
     expect(tools).toContain("reply_to_thread");
+  });
+
+  it("shows setup_agent_email only where it can actually run", () => {
+    // Account-wide API key: scopes null → allowed.
+    expect(visibleTools(base())).toContain("setup_agent_email");
+    // Readonly, URL-locked, or OAuth without `setup`: it would only fail.
+    expect(visibleTools(base({ readonly: true }))).not.toContain("setup_agent_email");
+    expect(visibleTools(base({ inboxId: "inbox-1" }))).not.toContain("setup_agent_email");
+    expect(
+      visibleTools(base({ authKind: "oauth", scopes: ["read", "send"] })),
+    ).not.toContain("setup_agent_email");
+    expect(
+      visibleTools(base({ authKind: "oauth", scopes: ["read", "setup"] })),
+    ).toContain("setup_agent_email");
+  });
+
+  it("read-only OAuth exposes exactly the read tools plus mark_thread_read", () => {
+    const tools = visibleTools(base({ authKind: "oauth", scopes: ["read"] }));
+    expect([...tools].sort()).toEqual(
+      [
+        "search_docs",
+        "get_docs",
+        "auth_me",
+        "send_mcp_feedback",
+        "list_inboxes",
+        "get_inbox",
+        "list_unread_threads",
+        "read_thread",
+        "get_attachment_text",
+        "mark_thread_read",
+        "list_domains",
+        "get_domain",
+      ].sort(),
+    );
+    expect(tools).toHaveLength(12);
   });
 });
 

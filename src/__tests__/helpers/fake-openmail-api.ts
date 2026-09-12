@@ -35,6 +35,8 @@ export type FakeState = {
   inboxes: FakeInbox[];
   threads: Record<string, FakeThread>;
   attachments: Record<string, { inboxId: string; text: string }>;
+  /** When set, GET /v1/me answers with this instead of looking the token up (simulates an API outage). */
+  meFailure?: { status: number; body?: unknown };
 };
 
 export type RecordedRequest = {
@@ -93,6 +95,10 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify(payload));
     };
+
+    if (method === "GET" && path === "/v1/me" && state.meFailure) {
+      return json(state.meFailure.status, state.meFailure.body ?? { error: "internal", message: "boom" });
+    }
 
     const me = token ? state.tokens[token] : undefined;
     if (!me) {

@@ -24,18 +24,47 @@ export function chunkMarkdown(markdown: string, sourceUrl: string): DocChunk[] {
     .filter((c): c is DocChunk => c !== null);
 }
 
+const STOP_WORDS = new Set(["a", "an", "the", "to", "of", "in", "on", "how", "do", "i"]);
+
+/** Occurrences of `needle` in `hay`, capped so a wall of text cannot win on repetition alone. */
+function countCapped(hay: string, needle: string, cap: number): number {
+  let count = 0;
+  let from = 0;
+  while (count < cap) {
+    const at = hay.indexOf(needle, from);
+    if (at === -1) break;
+    count += 1;
+    from = at + needle.length;
+  }
+  return count;
+}
+
+function normalizeQuery(query: string): string {
+  return query.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 export function rankChunks(chunks: DocChunk[], query: string, limit = 5): DocChunk[] {
-  const terms = query
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((t) => t.length > 1);
+  const phrase = normalizeQuery(query);
+  const terms = [...new Set(phrase.split(" ").filter((t) => t.length > 1 && !STOP_WORDS.has(t)))];
+  if (terms.length === 0 && !phrase) return [];
+
   const scored = chunks.map((chunk) => {
-    const hay = `${chunk.title}\n${chunk.text}`.toLowerCase();
+    const title = chunk.title.toLowerCase();
+    const body = chunk.text.toLowerCase();
     let score = 0;
     for (const term of terms) {
-      if (hay.includes(term)) score += term.length;
+      // Body: term frequency, capped per chunk. Title: a flat ×3 bonus.
+      score += term.length * countCapped(body, term, 5);
+      if (title.includes(term)) score += term.length * 3;
     }
-    return { chunk, score };
+    // Exact phrase beats any combination of scattered terms.
+    if (phrase.includes(" ")) {
+      if (title.includes(phrase)) score += phrase.length * 6;
+      else if (body.includes(phrase)) score += phrase.length * 3;
+    }
+    // Slight preference for focused sections over sprawling pages.
+    const lengthPenalty = Math.log(Math.max(chunk.text.length, 100));
+    return { chunk, score: score / lengthPenalty };
   });
   return scored
     .filter((s) => s.score > 0)
