@@ -18,6 +18,25 @@ function text(markdown: string, isError = false) {
   return { content: [{ type: "text" as const, text: markdown }], isError };
 }
 
+function consoleOrigin(): string {
+  return (process.env.CONSOLE_ORIGIN || "https://console.openmail.sh").replace(/\/+$/, "");
+}
+
+/**
+ * An OAuth session is a person chatting through a client (Claude, Cursor).
+ * Anything a tool returns lands in that transcript, so a raw API key would be
+ * exposed the moment it is minted — and the session does not need one: it is
+ * already authenticated. Keys are for a *different*, headless agent, so send
+ * the person to the console, where the token is shown once in the browser.
+ */
+function keyViaConsole(inbox: { address?: string | null }): string {
+  const where = inbox.address ? ` scoped to ${inbox.address}` : "";
+  return [
+    "No key was minted: this session is signed in with OAuth, so it already has access, and a raw key returned here would sit in the chat transcript.",
+    `If a separate agent needs its own key, mint one${where} in the console (shown once, in your browser): ${consoleOrigin()}/settings`,
+  ].join("\n");
+}
+
 function fail(err: unknown) {
   if (err instanceof ApiError) return text(formatApiError(err), true);
   return text(err instanceof Error ? err.message : "Unexpected error", true);
@@ -62,26 +81,36 @@ async function loadThread(
   return full;
 }
 
-async function resolveInboxId(
+type ResolvedInbox = { id: string; address?: string | null; defaulted: boolean };
+
+async function resolveInbox(
   ctx: SessionContext,
   api: OpenMailApi | null,
   requested?: string,
-): Promise<string> {
+): Promise<ResolvedInbox> {
   const locked = lockedInboxId(ctx);
   if (locked) {
     // Never silently substitute: an explicit inbox_id that is not the locked
     // one is an error, so the caller learns its credential cannot see it.
     if (requested) assertLockedInbox(ctx, requested);
-    return locked;
+    return { id: locked, defaulted: false };
   }
-  if (requested) return requested;
+  if (requested) return { id: requested, defaulted: false };
   if (!api) throw new Error("Sign in to OpenMail first.");
   const listed = (await api.get("/v1/inboxes?limit=1")) as {
-    data?: Array<{ id: string }>;
+    data?: Array<{ id: string; address?: string | null }>;
   };
-  const id = listed.data?.[0]?.id;
-  if (!id) throw new Error("No inbox yet. Call setup_agent_email or create_inbox.");
-  return id;
+  const first = listed.data?.[0];
+  if (!first?.id) throw new Error("No inbox yet. Call setup_agent_email or create_inbox.");
+  return { id: first.id, address: first.address, defaulted: true };
+}
+
+async function resolveInboxId(
+  ctx: SessionContext,
+  api: OpenMailApi | null,
+  requested?: string,
+): Promise<string> {
+  return (await resolveInbox(ctx, api, requested)).id;
 }
 
 export function createMcpServer(input: {
@@ -95,7 +124,7 @@ export function createMcpServer(input: {
     name: "openmail",
     version: "0.1.0",
     description:
-      "OpenMail is Gmail for agents. Read human/autoReplyable mail and reply in-thread. Do not invent From addresses. Unauthenticated: docs only. Hosted URL: https://mcp.openmail.sh/mcp",
+      "OpenMail is Gmail for agents. Read autoReplyable mail (people and other agents; not spam, bulk, or bounces) and reply in-thread. Do not invent From addresses. Unauthenticated: docs only. Hosted URL: https://mcp.openmail.sh/mcp",
   });
 
   const add = (
@@ -202,15 +231,24 @@ export function createMcpServer(input: {
     async (args) => {
       if (!api) return text("Sign in first.", true);
       if (!args.execute) {
+        const mailbox = args.mailboxName ? String(args.mailboxName) : "(auto-generated)";
+        const domain = args.domain ? String(args.domain) : "omail.sh";
+        const display = args.displayName ? ` "${String(args.displayName)}"` : "";
+        const keyStep =
+          args.mintKey === false
+            ? "skipped"
+            : ctx.authKind === "oauth"
+              ? "skipped — this session is already signed in; mint keys for other agents in the console"
+              : "scoped key so this agent cannot see other inboxes";
         return text(
           [
             "Plan:",
-            "1. create_inbox — live address, optional mailboxName/domain",
-            "2. mint_inbox_key — scoped key so this agent cannot see other inboxes",
+            `1. create_inbox — ${mailbox}@${domain}${display}`,
+            `2. mint_inbox_key — ${keyStep}`,
             "3. Optional add_domain + verify_domain for a custom domain",
             "4. list_unread_threads → read_thread → reply_to_thread",
             "",
-            "Call again with execute=true to do steps 1–2.",
+            "Call again with execute=true and the same arguments to do steps 1–2.",
           ].join("\n"),
         );
       }
@@ -221,11 +259,15 @@ export function createMcpServer(input: {
       })) as { id: string; address: string; displayName?: string | null };
       let keyLine = "";
       if (args.mintKey !== false) {
-        const key = (await api.post(`/v1/inboxes/${inbox.id}/api-keys`, {
-          name: "mcp",
-        })) as { token?: string };
-        if (key.token) {
-          keyLine = `\nInbox-scoped key (shown once): \`${key.token}\``;
+        if (ctx.authKind === "oauth") {
+          keyLine = `\n${keyViaConsole(inbox)}`;
+        } else {
+          const key = (await api.post(`/v1/inboxes/${inbox.id}/api-keys`, {
+            name: "mcp",
+          })) as { token?: string };
+          if (key.token) {
+            keyLine = `\nInbox-scoped key (shown once): \`${key.token}\`\nStore it in the agent's env (OPENMAIL_API_KEY); do not paste it into replies or docs.`;
+          }
         }
       }
       return text(`${formatInbox(inbox)}${keyLine}`);
@@ -298,9 +340,10 @@ export function createMcpServer(input: {
   add(
     "mint_inbox_key",
     toolDesc({
-      purpose: "Mint an API key locked to one inbox. Token is shown once.",
-      notFor: "Account-wide keys.",
-      when: "Handing a key to an agent or CI.",
+      purpose:
+        "Mint an API key locked to one inbox. Token is shown once. OAuth sessions are sent to the console instead, so the token never enters the chat.",
+      notFor: "Account-wide keys. Not needed for this session — it is already authenticated.",
+      when: "Handing a key to a separate headless agent or CI.",
       triggers: "mint a scoped key, inbox api key",
     }),
     {
@@ -309,12 +352,15 @@ export function createMcpServer(input: {
     },
     async (args) => {
       if (!api) return text("Sign in first.", true);
-      const id = await resolveInboxId(ctx, api, args.inbox_id as string | undefined);
-      const key = (await api.post(`/v1/inboxes/${id}/api-keys`, {
+      const inbox = await resolveInbox(ctx, api, args.inbox_id as string | undefined);
+      if (ctx.authKind === "oauth") return text(keyViaConsole(inbox));
+      const key = (await api.post(`/v1/inboxes/${inbox.id}/api-keys`, {
         name: args.name || "mcp",
       })) as { token?: string; last4?: string };
       if (!key.token) return text("Key created but token was not returned.");
-      return text(`Inbox-scoped key (shown once): \`${key.token}\``);
+      return text(
+        `Inbox-scoped key (shown once): \`${key.token}\`\nStore it in the agent's env (OPENMAIL_API_KEY); do not paste it into replies or docs.`,
+      );
     },
   );
 
@@ -379,10 +425,10 @@ export function createMcpServer(input: {
   add(
     "list_unread_threads",
     toolDesc({
-      purpose: "Unread threads, preferring human/autoReplyable mail.",
+      purpose: "Unread threads whose latest message is autoReplyable: from a person or another agent, not machine-generated.",
       notFor: "Spam, marketing, or bounces — those are filtered out.",
       when: "The mailbox loop: what needs a reply.",
-      triggers: "unread mail, anything from a human",
+      triggers: "unread mail, anything that needs a reply",
     }),
     {
       inbox_id: z.string().optional(),
@@ -390,7 +436,8 @@ export function createMcpServer(input: {
     },
     async (args) => {
       if (!api) return text("Sign in first.", true);
-      const id = await resolveInboxId(ctx, api, args.inbox_id as string | undefined);
+      const inbox = await resolveInbox(ctx, api, args.inbox_id as string | undefined);
+      const id = inbox.id;
       const limit = Number(args.limit ?? 10);
       const listed = (await api.get(
         `/v1/inboxes/${id}/threads?isRead=false&limit=${limit}`,
@@ -411,7 +458,9 @@ export function createMcpServer(input: {
           lastMessageAt: thread.lastMessageAt,
         });
       }
-      return text(formatThreads(rows));
+      // Only name the inbox when we picked it: an explicit inbox_id or a
+      // locked key already tells the caller where it looked.
+      return text(formatThreads(rows, inbox.defaulted ? inbox : undefined));
     },
   );
 
@@ -459,11 +508,11 @@ export function createMcpServer(input: {
     toolDesc({
       purpose: "LLM-ready text extracted from an attachment.",
       notFor: "Downloading raw bytes.",
-      when: "A thread message lists an attachment filename.",
+      when: "read_thread listed an attachment; use the `message:` id printed under it, not the thread id.",
       triggers: "read the pdf, extract the invoice",
     }),
     {
-      message_id: z.string(),
+      message_id: z.string().describe("The `message:` id shown under the attachment in read_thread"),
       filename: z.string(),
     },
     async (args) => {
