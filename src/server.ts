@@ -62,26 +62,36 @@ async function loadThread(
   return full;
 }
 
-async function resolveInboxId(
+type ResolvedInbox = { id: string; address?: string | null; defaulted: boolean };
+
+async function resolveInbox(
   ctx: SessionContext,
   api: OpenMailApi | null,
   requested?: string,
-): Promise<string> {
+): Promise<ResolvedInbox> {
   const locked = lockedInboxId(ctx);
   if (locked) {
     // Never silently substitute: an explicit inbox_id that is not the locked
     // one is an error, so the caller learns its credential cannot see it.
     if (requested) assertLockedInbox(ctx, requested);
-    return locked;
+    return { id: locked, defaulted: false };
   }
-  if (requested) return requested;
+  if (requested) return { id: requested, defaulted: false };
   if (!api) throw new Error("Sign in to OpenMail first.");
   const listed = (await api.get("/v1/inboxes?limit=1")) as {
-    data?: Array<{ id: string }>;
+    data?: Array<{ id: string; address?: string | null }>;
   };
-  const id = listed.data?.[0]?.id;
-  if (!id) throw new Error("No inbox yet. Call setup_agent_email or create_inbox.");
-  return id;
+  const first = listed.data?.[0];
+  if (!first?.id) throw new Error("No inbox yet. Call setup_agent_email or create_inbox.");
+  return { id: first.id, address: first.address, defaulted: true };
+}
+
+async function resolveInboxId(
+  ctx: SessionContext,
+  api: OpenMailApi | null,
+  requested?: string,
+): Promise<string> {
+  return (await resolveInbox(ctx, api, requested)).id;
 }
 
 export function createMcpServer(input: {
@@ -202,15 +212,18 @@ export function createMcpServer(input: {
     async (args) => {
       if (!api) return text("Sign in first.", true);
       if (!args.execute) {
+        const mailbox = args.mailboxName ? String(args.mailboxName) : "(auto-generated)";
+        const domain = args.domain ? String(args.domain) : "omail.sh";
+        const display = args.displayName ? ` "${String(args.displayName)}"` : "";
         return text(
           [
             "Plan:",
-            "1. create_inbox — live address, optional mailboxName/domain",
-            "2. mint_inbox_key — scoped key so this agent cannot see other inboxes",
+            `1. create_inbox — ${mailbox}@${domain}${display}`,
+            `2. mint_inbox_key — ${args.mintKey === false ? "skipped" : "scoped key so this agent cannot see other inboxes"}`,
             "3. Optional add_domain + verify_domain for a custom domain",
             "4. list_unread_threads → read_thread → reply_to_thread",
             "",
-            "Call again with execute=true to do steps 1–2.",
+            "Call again with execute=true and the same arguments to do steps 1–2.",
           ].join("\n"),
         );
       }
@@ -225,7 +238,7 @@ export function createMcpServer(input: {
           name: "mcp",
         })) as { token?: string };
         if (key.token) {
-          keyLine = `\nInbox-scoped key (shown once): \`${key.token}\``;
+          keyLine = `\nInbox-scoped key (shown once): \`${key.token}\`\nStore it in the agent's env (OPENMAIL_API_KEY); do not paste it into replies or docs.`;
         }
       }
       return text(`${formatInbox(inbox)}${keyLine}`);
@@ -314,7 +327,9 @@ export function createMcpServer(input: {
         name: args.name || "mcp",
       })) as { token?: string; last4?: string };
       if (!key.token) return text("Key created but token was not returned.");
-      return text(`Inbox-scoped key (shown once): \`${key.token}\``);
+      return text(
+        `Inbox-scoped key (shown once): \`${key.token}\`\nStore it in the agent's env (OPENMAIL_API_KEY); do not paste it into replies or docs.`,
+      );
     },
   );
 
@@ -390,7 +405,8 @@ export function createMcpServer(input: {
     },
     async (args) => {
       if (!api) return text("Sign in first.", true);
-      const id = await resolveInboxId(ctx, api, args.inbox_id as string | undefined);
+      const inbox = await resolveInbox(ctx, api, args.inbox_id as string | undefined);
+      const id = inbox.id;
       const limit = Number(args.limit ?? 10);
       const listed = (await api.get(
         `/v1/inboxes/${id}/threads?isRead=false&limit=${limit}`,
@@ -411,7 +427,9 @@ export function createMcpServer(input: {
           lastMessageAt: thread.lastMessageAt,
         });
       }
-      return text(formatThreads(rows));
+      // Only name the inbox when we picked it: an explicit inbox_id or a
+      // locked key already tells the caller where it looked.
+      return text(formatThreads(rows, inbox.defaulted ? inbox : undefined));
     },
   );
 
@@ -459,11 +477,11 @@ export function createMcpServer(input: {
     toolDesc({
       purpose: "LLM-ready text extracted from an attachment.",
       notFor: "Downloading raw bytes.",
-      when: "A thread message lists an attachment filename.",
+      when: "read_thread listed an attachment; use the `message:` id printed under it, not the thread id.",
       triggers: "read the pdf, extract the invoice",
     }),
     {
-      message_id: z.string(),
+      message_id: z.string().describe("The `message:` id shown under the attachment in read_thread"),
       filename: z.string(),
     },
     async (args) => {

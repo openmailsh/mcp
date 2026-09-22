@@ -423,6 +423,33 @@ describe("mailbox tools", () => {
     expect(result.text).toContain("Where is my invoice?");
   });
 
+  it("read_thread prints the message id next to attachments so get_attachment_text is reachable", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "read_thread", { thread_id: "thread-a1" });
+    expect(result.text).toContain("attachments: invoice.pdf");
+    expect(result.text).toContain("message: msg-a1");
+    // Round-trip: the id read_thread printed is the one the attachment tool accepts.
+    const att = await call(client, "get_attachment_text", { message_id: "msg-a1", filename: "invoice.pdf" });
+    expect(att.isError).toBe(false);
+  });
+
+  it("list_unread_threads names the inbox when it had to pick one", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const picked = await call(client, "list_unread_threads");
+    expect(picked.text).toContain("a@omail.sh");
+    // Explicit inbox: caller already knows where it looked, so no scope line.
+    const explicit = await call(client, "list_unread_threads", { inbox_id: "inbox-a" });
+    expect(explicit.text).not.toContain("a@omail.sh");
+  });
+
+  it("setup_agent_email plan echoes the requested mailbox, domain, and display name", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "setup_agent_email", { mailboxName: "release-bot", displayName: "Release Bot" });
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain('release-bot@omail.sh "Release Bot"');
+    expect(api.calls("POST", /^\/v1\/inboxes$/)).toHaveLength(0);
+  });
+
   it("mark_thread_read flips the thread on the API", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     const result = await call(client, "mark_thread_read", { thread_id: "thread-a1" });

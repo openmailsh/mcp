@@ -33,17 +33,23 @@ export function formatThreads(
     autoReplyable?: boolean | null;
     lastMessageAt?: string;
   }>,
+  inbox?: { id: string; address?: string | null },
 ): string {
+  // Name the inbox that was scanned. Without it, "no threads" on an account
+  // key is ambiguous: none anywhere, or none in whichever inbox was picked.
+  const scope = inbox ? ` in ${inbox.address || inbox.id}` : "";
   if (rows.length === 0) {
-    return "No unread human/auto-replyable threads.";
+    return `No unread human/auto-replyable threads${scope}.`;
   }
-  return rows
-    .map((row) => {
+  const header = inbox ? [`Unread${scope}:`] : [];
+  return [
+    ...header,
+    ...rows.map((row) => {
       const subject = row.subject || "(no subject)";
       const from = row.from ? ` from ${row.from}` : "";
       return `- ${subject}${from}\n  thread: ${row.id}`;
-    })
-    .join("\n");
+    }),
+  ].join("\n");
 }
 
 export function formatThread(thread: {
@@ -76,8 +82,11 @@ export function formatThread(thread: {
     if (message.category) lines.push(`category: ${message.category}`);
     lines.push(clip(message.bodyText || "(empty body)", 6000));
     if (message.attachments?.length) {
+      // The message id is the handle get_attachment_text needs; without it an
+      // agent has nothing to pass but the thread id, which 404s.
       lines.push(
         `attachments: ${message.attachments.map((a) => a.filename).join(", ")}`,
+        `message: ${message.id} (pass as message_id to get_attachment_text)`,
       );
     }
     lines.push("");
