@@ -23,7 +23,7 @@ There is **no local stdio catalog** — stdio-only clients should use `mcp-remot
 
 Prefer an inbox-scoped key. Read-only: `/mcp/readonly`. One inbox: `/mcp/inbox/{id}`.
 
-`setup_agent_email` and `mint_inbox_key` return the new key in the tool result, so it lands in the agent's transcript. Move it to the agent's env and revoke it from the console if the transcript is shared.
+Keys and transcripts: over OAuth (Claude, Cursor sign-in) `setup_agent_email` and `mint_inbox_key` never return a token — the session is already authenticated, and anything returned lands in the chat. They point to the console, which shows a new key once in the browser. Over an API key (headless agent) the token is returned in the tool result; move it to the agent's env.
 
 **stdio-only clients:** `npx -y mcp-remote https://mcp.openmail.sh/mcp`
 

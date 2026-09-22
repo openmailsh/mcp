@@ -18,6 +18,25 @@ function text(markdown: string, isError = false) {
   return { content: [{ type: "text" as const, text: markdown }], isError };
 }
 
+function consoleOrigin(): string {
+  return (process.env.CONSOLE_ORIGIN || "https://console.openmail.sh").replace(/\/+$/, "");
+}
+
+/**
+ * An OAuth session is a person chatting through a client (Claude, Cursor).
+ * Anything a tool returns lands in that transcript, so a raw API key would be
+ * exposed the moment it is minted — and the session does not need one: it is
+ * already authenticated. Keys are for a *different*, headless agent, so send
+ * the person to the console, where the token is shown once in the browser.
+ */
+function keyViaConsole(inbox: { address?: string | null }): string {
+  const where = inbox.address ? ` scoped to ${inbox.address}` : "";
+  return [
+    "No key was minted: this session is signed in with OAuth, so it already has access, and a raw key returned here would sit in the chat transcript.",
+    `If a separate agent needs its own key, mint one${where} in the console (shown once, in your browser): ${consoleOrigin()}/settings`,
+  ].join("\n");
+}
+
 function fail(err: unknown) {
   if (err instanceof ApiError) return text(formatApiError(err), true);
   return text(err instanceof Error ? err.message : "Unexpected error", true);
@@ -215,11 +234,17 @@ export function createMcpServer(input: {
         const mailbox = args.mailboxName ? String(args.mailboxName) : "(auto-generated)";
         const domain = args.domain ? String(args.domain) : "omail.sh";
         const display = args.displayName ? ` "${String(args.displayName)}"` : "";
+        const keyStep =
+          args.mintKey === false
+            ? "skipped"
+            : ctx.authKind === "oauth"
+              ? "skipped — this session is already signed in; mint keys for other agents in the console"
+              : "scoped key so this agent cannot see other inboxes";
         return text(
           [
             "Plan:",
             `1. create_inbox — ${mailbox}@${domain}${display}`,
-            `2. mint_inbox_key — ${args.mintKey === false ? "skipped" : "scoped key so this agent cannot see other inboxes"}`,
+            `2. mint_inbox_key — ${keyStep}`,
             "3. Optional add_domain + verify_domain for a custom domain",
             "4. list_unread_threads → read_thread → reply_to_thread",
             "",
@@ -234,11 +259,15 @@ export function createMcpServer(input: {
       })) as { id: string; address: string; displayName?: string | null };
       let keyLine = "";
       if (args.mintKey !== false) {
-        const key = (await api.post(`/v1/inboxes/${inbox.id}/api-keys`, {
-          name: "mcp",
-        })) as { token?: string };
-        if (key.token) {
-          keyLine = `\nInbox-scoped key (shown once): \`${key.token}\`\nStore it in the agent's env (OPENMAIL_API_KEY); do not paste it into replies or docs.`;
+        if (ctx.authKind === "oauth") {
+          keyLine = `\n${keyViaConsole(inbox)}`;
+        } else {
+          const key = (await api.post(`/v1/inboxes/${inbox.id}/api-keys`, {
+            name: "mcp",
+          })) as { token?: string };
+          if (key.token) {
+            keyLine = `\nInbox-scoped key (shown once): \`${key.token}\`\nStore it in the agent's env (OPENMAIL_API_KEY); do not paste it into replies or docs.`;
+          }
         }
       }
       return text(`${formatInbox(inbox)}${keyLine}`);
@@ -311,9 +340,10 @@ export function createMcpServer(input: {
   add(
     "mint_inbox_key",
     toolDesc({
-      purpose: "Mint an API key locked to one inbox. Token is shown once.",
-      notFor: "Account-wide keys.",
-      when: "Handing a key to an agent or CI.",
+      purpose:
+        "Mint an API key locked to one inbox. Token is shown once. OAuth sessions are sent to the console instead, so the token never enters the chat.",
+      notFor: "Account-wide keys. Not needed for this session — it is already authenticated.",
+      when: "Handing a key to a separate headless agent or CI.",
       triggers: "mint a scoped key, inbox api key",
     }),
     {
@@ -322,8 +352,9 @@ export function createMcpServer(input: {
     },
     async (args) => {
       if (!api) return text("Sign in first.", true);
-      const id = await resolveInboxId(ctx, api, args.inbox_id as string | undefined);
-      const key = (await api.post(`/v1/inboxes/${id}/api-keys`, {
+      const inbox = await resolveInbox(ctx, api, args.inbox_id as string | undefined);
+      if (ctx.authKind === "oauth") return text(keyViaConsole(inbox));
+      const key = (await api.post(`/v1/inboxes/${inbox.id}/api-keys`, {
         name: args.name || "mcp",
       })) as { token?: string; last4?: string };
       if (!key.token) return text("Key created but token was not returned.");

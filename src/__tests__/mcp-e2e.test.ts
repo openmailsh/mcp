@@ -480,4 +480,34 @@ describe("mailbox tools", () => {
     expect(api.calls("POST", /^\/v1\/inboxes$/)).toHaveLength(1);
     expect(api.calls("POST", /^\/v1\/inboxes\/inbox-new-\d+\/api-keys$/)).toHaveLength(1);
   });
+
+  // An OAuth session is a person's chat. A raw key returned there is exposed to
+  // the transcript the moment it is minted, and the session does not need one.
+  it("setup_agent_email over OAuth creates the inbox but never mints or prints a key", async () => {
+    const client = await connect("/mcp", await oauthToken("read setup send domains"));
+    const result = await call(client, "setup_agent_email", { execute: true, mailboxName: "helper" });
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("helper@omail.sh");
+    expect(result.text).not.toContain("om_");
+    expect(result.text).toContain("console.openmail.sh/settings");
+    expect(api.calls("POST", /^\/v1\/inboxes$/)).toHaveLength(1);
+    expect(api.calls("POST", /api-keys$/)).toHaveLength(0);
+  });
+
+  it("mint_inbox_key over OAuth points to the console instead of returning a token", async () => {
+    const client = await connect("/mcp", await oauthToken("read setup send domains"));
+    const result = await call(client, "mint_inbox_key", { inbox_id: "inbox-1" });
+    expect(result.isError).toBe(false);
+    expect(result.text).not.toContain("om_");
+    expect(result.text).toContain("console.openmail.sh/settings");
+    expect(api.calls("POST", /api-keys$/)).toHaveLength(0);
+  });
+
+  it("mint_inbox_key with an API key still returns the token (headless agent)", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "mint_inbox_key", { inbox_id: "inbox-1" });
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("om_minted_");
+    expect(api.calls("POST", /^\/v1\/inboxes\/inbox-1\/api-keys$/)).toHaveLength(1);
+  });
 });
