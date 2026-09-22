@@ -105,7 +105,7 @@ export function createMcpServer(input: {
     name: "openmail",
     version: "0.1.0",
     description:
-      "OpenMail is Gmail for agents. Read human/autoReplyable mail and reply in-thread. Do not invent From addresses. Unauthenticated: docs only. Hosted URL: https://mcp.openmail.sh/mcp",
+      "OpenMail is Gmail for agents. Read autoReplyable mail (people and other agents; not spam, bulk, or bounces) and reply in-thread. Do not invent From addresses. Unauthenticated: docs only. Hosted URL: https://mcp.openmail.sh/mcp",
   });
 
   const add = (
@@ -394,10 +394,10 @@ export function createMcpServer(input: {
   add(
     "list_unread_threads",
     toolDesc({
-      purpose: "Unread threads, preferring human/autoReplyable mail.",
+      purpose: "Unread threads whose latest message is autoReplyable: from a person or another agent, not machine-generated.",
       notFor: "Spam, marketing, or bounces — those are filtered out.",
       when: "The mailbox loop: what needs a reply.",
-      triggers: "unread mail, anything from a human",
+      triggers: "unread mail, anything that needs a reply",
     }),
     {
       inbox_id: z.string().optional(),

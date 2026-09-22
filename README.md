@@ -1,6 +1,6 @@
 # OpenMail MCP
 
-Hosted Streamable HTTP MCP at `https://mcp.openmail.sh/mcp`. Gmail for agents: one inbox, read human mail, reply in-thread.
+Hosted Streamable HTTP MCP at `https://mcp.openmail.sh/mcp`. Gmail for agents: one inbox, read mail that wants a reply, reply in-thread.
 
 There is **no local stdio catalog** — stdio-only clients should use `mcp-remote`.
 

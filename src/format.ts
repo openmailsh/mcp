@@ -39,7 +39,7 @@ export function formatThreads(
   // key is ambiguous: none anywhere, or none in whichever inbox was picked.
   const scope = inbox ? ` in ${inbox.address || inbox.id}` : "";
   if (rows.length === 0) {
-    return `No unread human/auto-replyable threads${scope}.`;
+    return `No unread threads that need a reply${scope}.`;
   }
   const header = inbox ? [`Unread${scope}:`] : [];
   return [
@@ -209,6 +209,6 @@ Hosted HTTP is the product. Bridge with:
 ## Example prompts
 
 - Set up an inbox for this agent and show me the address.
-- Reply to unread mail from humans.
+- Reply to unread mail that needs an answer.
 - Add and verify mail.example.com.
 `;
