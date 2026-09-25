@@ -116,8 +116,9 @@ function formatTimestamp(iso?: string): string {
 // has just read (and burns context).
 const QUOTE_MARKERS: RegExp[] = [
   // Gmail / Apple Mail: "On Fri, 25 Sep 2026 at 11:42, Jane <j@x.com> wrote:"
-  // The header can wrap onto a second line.
-  /^On (?:[^\n]*\n){0,1}[^\n]*wrote:\s*$/m,
+  // The header can wrap so "wrote:" sits alone on the next line — only whitespace
+  // is allowed before it there, or ordinary prose like "I wrote:" would cut the reply.
+  /^On [^\n]*(?:\n\s*)?wrote:\s*$/m,
   // Outlook
   /^-{2,}\s*Original Message\s*-{2,}\s*$/mi,
   /^_{5,}\s*$/m,

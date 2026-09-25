@@ -24,4 +24,10 @@ describe("stripQuotedReply", () => {
   it("does not touch a body without quotes", () => {
     expect(stripQuotedReply("I wrote: nothing here.\nOn time.")).toBe("I wrote: nothing here.\nOn time.");
   });
+
+  it("does not treat an On-line plus a later wrote: as a quote header", () => {
+    const body =
+      "Thanks for the update.\n\nOn Monday the client called.\nI wrote:\nPlease follow up tomorrow.";
+    expect(stripQuotedReply(body)).toBe(body);
+  });
 });
