@@ -169,8 +169,20 @@ const WRITE_TOOLS = ["setup_agent_email", "send_email", "reply_to_thread", "mark
 // ---------------------------------------------------------------------------
 
 describe("tools/list", () => {
-  it("unauthenticated sessions see only the docs tools", async () => {
-    const client = await connect("/mcp");
+  it("a missing credential at /mcp is a 401 with WWW-Authenticate so clients start OAuth", async () => {
+    const res = await fetch(`${mcpBase}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "t", version: "0" } } }),
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toContain("resource_metadata=");
+    await expect(connect("/mcp")).rejects.toMatchObject({ code: 401 });
+    expect(api.requests).toHaveLength(0);
+  });
+
+  it("unauthenticated sessions at /mcp/public see only the docs tools", async () => {
+    const client = await connect("/mcp/public");
     expect(await toolNames(client)).toEqual(["get_docs", "search_docs"]);
     expect(api.requests).toHaveLength(0);
   });
@@ -440,6 +452,46 @@ describe("mailbox tools", () => {
     // Explicit inbox: caller already knows where it looked, so no scope line.
     const explicit = await call(client, "list_unread_threads", { inbox_id: "inbox-a" });
     expect(explicit.text).not.toContain("a@omail.sh");
+  });
+
+  it("send_email names the inbox it defaulted to, and stays quiet when told which one", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const picked = await call(client, "send_email", { to: "x@example.com", subject: "Hi", body: "Hello" });
+    expect(picked.isError).toBe(false);
+    expect(picked.text).toContain("from: a@omail.sh");
+    expect(picked.text).toContain("inbox_id");
+    const explicit = await call(client, "send_email", { to: "x@example.com", subject: "Hi", body: "Hello", inbox_id: "inbox-b" });
+    expect(explicit.text).not.toContain("from:");
+    expect(api.calls("POST", /\/v1\/inboxes\/inbox-b\/send$/)).toHaveLength(1);
+  });
+
+  it("read_thread strips quoted history, shows timestamps and the autoReplyable flag", async () => {
+    api.state.threads["thread-a1"].messages.push({
+      id: "msg-a1b",
+      direction: "inbound",
+      fromAddr: "human@example.com",
+      createdAt: "2026-09-25T11:42:00Z",
+      autoReplyable: true,
+      bodyText: "Thanks, got it.\n\nOn Fri, 25 Sep 2026 at 11:40, Agent <a@omail.sh>\nwrote:\n> Here is the invoice.\n> Regards\n",
+    });
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "read_thread", { thread_id: "thread-a1" });
+    expect(result.text).toContain("2026-09-25 11:42 UTC");
+    expect(result.text).toContain("autoReplyable: yes");
+    expect(result.text).toContain("Thanks, got it.");
+    expect(result.text).not.toContain("Here is the invoice.");
+    expect(result.text).not.toContain("wrote:");
+  });
+
+  it("tools carry annotations so clients can tell reads from sends", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const { tools } = await client.listTools();
+    const byName = Object.fromEntries(tools.map((t) => [t.name, t.annotations]));
+    expect(byName.read_thread).toMatchObject({ readOnlyHint: true });
+    expect(byName.list_inboxes).toMatchObject({ readOnlyHint: true });
+    expect(byName.create_inbox).toMatchObject({ destructiveHint: false });
+    expect(byName.send_email).toMatchObject({ destructiveHint: true, openWorldHint: true });
+    for (const tool of tools) expect(tool.annotations?.title, tool.name).toBeTruthy();
   });
 
   it("setup_agent_email plan echoes the requested mailbox, domain, and display name", async () => {

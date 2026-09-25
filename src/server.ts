@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { SessionContext, ToolName } from "./session.js";
 import { assertLockedInbox, lockedInboxId, visibleTools } from "./session.js";
@@ -64,6 +65,8 @@ type ThreadMessages = {
     id: string;
     direction: string;
     fromAddr: string;
+    toAddr?: string;
+    createdAt?: string;
     bodyText?: string | null;
     autoReplyable?: boolean | null;
     category?: string | null;
@@ -113,6 +116,37 @@ async function resolveInboxId(
   return (await resolveInbox(ctx, api, requested)).id;
 }
 
+/**
+ * Hints clients use to decide how much to ask the user before running a tool.
+ * Without them ChatGPT and Claude treat every tool as a destructive write and
+ * prompt on each call — including reads. Defaults (when a tool is omitted)
+ * are the spec's: readOnly false, destructive true, idempotent false, open
+ * world true.
+ */
+const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
+  search_docs: { title: "Search OpenMail docs", readOnlyHint: true, openWorldHint: false },
+  get_docs: { title: "Fetch a docs page", readOnlyHint: true, openWorldHint: false },
+  auth_me: { title: "Who am I", readOnlyHint: true, openWorldHint: false },
+  send_mcp_feedback: { title: "Send feedback to OpenMail", destructiveHint: false, openWorldHint: false },
+  list_inboxes: { title: "List inboxes", readOnlyHint: true, openWorldHint: false },
+  get_inbox: { title: "Show inbox", readOnlyHint: true, openWorldHint: false },
+  list_unread_threads: { title: "List unread threads", readOnlyHint: true, openWorldHint: false },
+  read_thread: { title: "Read thread", readOnlyHint: true, openWorldHint: false },
+  get_attachment_text: { title: "Read attachment", readOnlyHint: true, openWorldHint: false },
+  list_domains: { title: "List domains", readOnlyHint: true, openWorldHint: false },
+  get_domain: { title: "Show domain DNS", readOnlyHint: true, openWorldHint: false },
+  // Creates something new; running it twice creates two. Not destructive.
+  setup_agent_email: { title: "Set up agent inbox", destructiveHint: false, openWorldHint: false },
+  create_inbox: { title: "Create inbox", destructiveHint: false, openWorldHint: false },
+  mint_inbox_key: { title: "Mint inbox API key", destructiveHint: false, openWorldHint: false },
+  add_domain: { title: "Add custom domain", destructiveHint: false, openWorldHint: false },
+  verify_domain: { title: "Verify domain DNS", destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  mark_thread_read: { title: "Mark thread read", destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  // Mail leaves the system and cannot be recalled: destructive + open world.
+  send_email: { title: "Send email", destructiveHint: true, openWorldHint: true },
+  reply_to_thread: { title: "Reply to thread", destructiveHint: true, openWorldHint: true },
+};
+
 export function createMcpServer(input: {
   ctx: SessionContext;
   api: OpenMailApi | null;
@@ -124,7 +158,7 @@ export function createMcpServer(input: {
     name: "openmail",
     version: "0.1.0",
     description:
-      "OpenMail is Gmail for agents. Read autoReplyable mail (people and other agents; not spam, bulk, or bounces) and reply in-thread. Do not invent From addresses. Unauthenticated: docs only. Hosted URL: https://mcp.openmail.sh/mcp",
+      "OpenMail is Gmail for agents. Read autoReplyable mail (people and other agents; not spam, bulk, or bounces) and reply in-thread. Do not invent From addresses. Hosted URL: https://mcp.openmail.sh/mcp (sign in required; docs only at /mcp/public)",
   });
 
   const add = (
@@ -134,13 +168,17 @@ export function createMcpServer(input: {
     handler: (args: Record<string, unknown>) => Promise<{ content: { type: "text"; text: string }[]; isError?: boolean }>,
   ) => {
     if (!allowed.has(name)) return;
-    server.tool(name, description, schema, async (args) => {
-      try {
-        return await handler(args as Record<string, unknown>);
-      } catch (err) {
-        return fail(err);
-      }
-    });
+    server.registerTool(
+      name,
+      { description, inputSchema: schema, annotations: TOOL_ANNOTATIONS[name] },
+      async (args) => {
+        try {
+          return await handler(args as Record<string, unknown>);
+        } catch (err) {
+          return fail(err);
+        }
+      },
+    );
   };
 
   add(
@@ -376,18 +414,26 @@ export function createMcpServer(input: {
       to: z.string().email(),
       subject: z.string(),
       body: z.string(),
-      inbox_id: z.string().optional(),
+      inbox_id: z
+        .string()
+        .optional()
+        .describe("Inbox to send from. Omit only when the account has one inbox; otherwise call list_inboxes and pass the right id."),
     },
     async (args) => {
       if (!api) return text("Sign in first.", true);
-      const id = await resolveInboxId(ctx, api, args.inbox_id as string | undefined);
-      const sent = (await api.post(`/v1/inboxes/${id}/send`, {
+      const inbox = await resolveInbox(ctx, api, args.inbox_id as string | undefined);
+      const sent = (await api.post(`/v1/inboxes/${inbox.id}/send`, {
         to: args.to,
         subject: args.subject,
         body: args.body,
-      })) as { id?: string; threadId?: string };
+      })) as { id?: string; threadId?: string; from?: string };
+      // Say which address the mail left from when we chose it: the agent
+      // (and the person reading the transcript) should never have to guess.
+      const from = inbox.defaulted
+        ? `\nfrom: ${inbox.address || inbox.id} (default inbox — pass inbox_id to send from another)`
+        : "";
       return text(
-        `Sent to ${args.to}${sent.threadId ? `\nthread: ${sent.threadId}` : ""}`,
+        `Sent to ${args.to}${from}${sent.threadId ? `\nthread: ${sent.threadId}` : ""}`,
       );
     },
   );

@@ -60,6 +60,8 @@ export function formatThread(thread: {
     direction: string;
     fromAddr?: string;
     from?: string;
+    toAddr?: string;
+    createdAt?: string;
     bodyText?: string | null;
     subject?: string | null;
     autoReplyable?: boolean | null;
@@ -74,13 +76,20 @@ export function formatThread(thread: {
   ];
   for (const message of thread.messages) {
     const from = message.fromAddr || message.from || "unknown";
-    const skip =
-      message.direction === "inbound" && message.autoReplyable === false
-        ? " — skip (not auto-replyable)"
-        : "";
-    lines.push(`## ${message.direction} from ${from}${skip}`);
-    if (message.category) lines.push(`category: ${message.category}`);
-    lines.push(clip(message.bodyText || "(empty body)", 6000));
+    const when = formatTimestamp(message.createdAt);
+    const to = message.direction === "outbound" && message.toAddr ? ` to ${message.toAddr}` : "";
+    lines.push(`## ${message.direction} from ${from}${to}${when ? ` — ${when}` : ""}`);
+    const meta: string[] = [];
+    if (message.category) meta.push(`category: ${message.category}`);
+    if (message.direction === "inbound" && message.autoReplyable != null) {
+      meta.push(
+        message.autoReplyable
+          ? "autoReplyable: yes"
+          : "autoReplyable: no — skip, do not reply",
+      );
+    }
+    if (meta.length) lines.push(meta.join(" · "));
+    lines.push(clip(stripQuotedReply(message.bodyText || "") || "(empty body)", 6000));
     if (message.attachments?.length) {
       // The message id is the handle get_attachment_text needs; without it an
       // agent has nothing to pass but the thread id, which 404s.
@@ -92,6 +101,49 @@ export function formatThread(thread: {
     lines.push("");
   }
   return lines.join("\n").trim();
+}
+
+function formatTimestamp(iso?: string): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  // 2026-09-25 11:42 UTC — sortable, unambiguous, short.
+  return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+// Where mail clients start the quoted history of a reply. Each message in a
+// thread is already shown on its own, so the quote only repeats what the agent
+// has just read (and burns context).
+const QUOTE_MARKERS: RegExp[] = [
+  // Gmail / Apple Mail: "On Fri, 25 Sep 2026 at 11:42, Jane <j@x.com> wrote:"
+  // The header can wrap onto a second line.
+  /^On (?:[^\n]*\n){0,1}[^\n]*wrote:\s*$/m,
+  // Outlook
+  /^-{2,}\s*Original Message\s*-{2,}\s*$/mi,
+  /^_{5,}\s*$/m,
+  /^From:\s[^\n]*\n(?:Sent|Date):\s/m,
+  // Localised Gmail
+  /^Le [^\n]* a écrit\s*:\s*$/m,
+  /^Am [^\n]* schrieb [^\n]*:\s*$/m,
+  /^El [^\n]* escribió:\s*$/m,
+];
+
+/** Drop the quoted history a reply carries; keep the new text on top. */
+export function stripQuotedReply(body: string): string {
+  let cut = body.length;
+  for (const marker of QUOTE_MARKERS) {
+    const match = marker.exec(body);
+    if (match && match.index < cut) cut = match.index;
+  }
+  let head = body.slice(0, cut);
+  // A trailing block of `>` lines is quoted too, even without a marker —
+  // but only if there is something unquoted above it to keep.
+  const unquoted = head.replace(/(?:^|\n)[ \t]*>[^\n]*(?=\n|$)/g, "");
+  if (unquoted.trim()) head = head.replace(/(?:\n[ \t]*>[^\n]*)+\s*$/, "");
+  head = head.trim();
+  // Never hide the whole message: a body that is nothing but a quote is
+  // still the only text there is.
+  return head || body.trim();
 }
 
 export function formatDns(domain: {
@@ -190,6 +242,7 @@ Prefer an **inbox-scoped** key so the agent cannot see other inboxes.
 - \`https://mcp.openmail.sh/mcp?readonly=true\`
 - \`https://mcp.openmail.sh/mcp/inbox/INBOX_ID\`
 - \`?toolsets=mailbox,docs\`
+- \`https://mcp.openmail.sh/mcp/public\` — docs only, no sign-in
 
 ## Old stdio-only clients
 

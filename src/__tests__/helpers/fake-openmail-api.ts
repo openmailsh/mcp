@@ -13,6 +13,8 @@ export type FakeMessage = {
   id: string;
   direction: "inbound" | "outbound";
   fromAddr: string;
+  toAddr?: string;
+  createdAt?: string;
   bodyText?: string | null;
   autoReplyable?: boolean | null;
   attachments?: Array<{ filename: string }>;

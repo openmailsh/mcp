@@ -41,6 +41,12 @@ function wwwAuthenticate(): string {
   return `Bearer realm="OpenMail MCP", resource_metadata="${mcpResource()}/.well-known/oauth-protected-resource"`;
 }
 
+/** Anonymous, docs-only endpoint. Everything else requires a credential. */
+function isPublicPath(path: string): boolean {
+  const p = path.replace(/\/+$/, "");
+  return p === "/public" || p === "/mcp/public";
+}
+
 function bearerToken(req: express.Request): string | null {
   const header = req.headers.authorization;
   if (typeof header === "string" && header.startsWith("Bearer ")) {
@@ -192,6 +198,18 @@ export function createApp(): express.Express {
 
   const handleMcp: express.RequestHandler = async (req, res) => {
     const token = bearerToken(req);
+    // Clients only start OAuth when they see a 401 with WWW-Authenticate. A
+    // 200 with docs-only tools looks like a working server with two tools, so
+    // the user is never asked to sign in. Anonymous docs stay available at
+    // the explicit /public paths for agents that want them.
+    if (!token && !isPublicPath(req.path)) {
+      res.setHeader("WWW-Authenticate", wwwAuthenticate());
+      res.status(401).json({
+        error: "unauthorized",
+        error_description: "Sign in to OpenMail to use this MCP server. Docs-only access: /mcp/public",
+      });
+      return;
+    }
     const auth = await resolveAuth(token);
     if (auth.unauthorized) {
       res.setHeader("WWW-Authenticate", wwwAuthenticate());
@@ -237,6 +255,8 @@ export function createApp(): express.Express {
   for (const path of [
     "/",
     "/mcp",
+    "/mcp/public",
+    "/public",
     "/mcp/readonly",
     "/readonly",
     "/mcp/inbox/:inboxId",
