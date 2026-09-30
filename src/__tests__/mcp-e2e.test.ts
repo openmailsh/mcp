@@ -411,6 +411,31 @@ describe("mailbox tools", () => {
     expect(sends[0].headers["x-openmail-client"]).toBe("mcp");
   });
 
+  it("send_email and reply_to_thread forward cc and bcc, and omit them when empty", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+
+    const sent = await call(client, "send_email", {
+      to: "x@example.com", subject: "s", body: "b", inbox_id: "inbox-a",
+      cc: ["c@example.com"], bcc: ["crm@example.com", "log@example.com"],
+    });
+    expect(sent.isError).toBe(false);
+
+    const replied = await call(client, "reply_to_thread", {
+      thread_id: "thread-a1", body: "r", bcc: ["crm@example.com"], cc: [],
+    });
+    expect(replied.isError).toBe(false);
+
+    const sends = api.calls("POST", /\/send$/);
+    expect(sends).toHaveLength(2);
+    expect(sends[0].body).toEqual({
+      to: "x@example.com", subject: "s", body: "b",
+      cc: ["c@example.com"], bcc: ["crm@example.com", "log@example.com"],
+    });
+    expect(sends[1].body).toEqual({
+      to: "human@example.com", body: "r", threadId: "thread-a1", bcc: ["crm@example.com"],
+    });
+  });
+
   it("list_unread_threads drops threads whose latest inbound is not autoReplyable", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     const result = await call(client, "list_unread_threads", { inbox_id: "inbox-a" });
