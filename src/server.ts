@@ -19,6 +19,19 @@ function text(markdown: string, isError = false) {
   return { content: [{ type: "text" as const, text: markdown }], isError };
 }
 
+const CC_SCHEMA = z.array(z.string().email()).optional().describe("Visible copies.");
+const BCC_SCHEMA = z
+  .array(z.string().email())
+  .optional()
+  .describe("Blind copies, hidden from To and Cc. For CRM logging addresses (HubSpot, Salesforce).");
+
+/** `cc`/`bcc` for a send body; empty lists are omitted so the request matches a plain send. */
+function copies(args: { cc?: unknown; bcc?: unknown }): { cc?: string[]; bcc?: string[] } {
+  const cc = args.cc as string[] | undefined;
+  const bcc = args.bcc as string[] | undefined;
+  return { ...(cc?.length ? { cc } : {}), ...(bcc?.length ? { bcc } : {}) };
+}
+
 function consoleOrigin(): string {
   return (process.env.CONSOLE_ORIGIN || "https://console.openmail.sh").replace(/\/+$/, "");
 }
@@ -414,6 +427,8 @@ export function createMcpServer(input: {
       to: z.string().email(),
       subject: z.string(),
       body: z.string(),
+      cc: CC_SCHEMA,
+      bcc: BCC_SCHEMA,
       inbox_id: z
         .string()
         .optional()
@@ -426,6 +441,7 @@ export function createMcpServer(input: {
         to: args.to,
         subject: args.subject,
         body: args.body,
+        ...copies(args),
       })) as { id?: string; threadId?: string; from?: string };
       // Say which address the mail left from when we chose it: the agent
       // (and the person reading the transcript) should never have to guess.
@@ -449,6 +465,8 @@ export function createMcpServer(input: {
     {
       thread_id: z.string(),
       body: z.string(),
+      cc: CC_SCHEMA,
+      bcc: BCC_SCHEMA,
       inbox_id: z.string().optional(),
     },
     async (args) => {
@@ -463,6 +481,7 @@ export function createMcpServer(input: {
         to,
         body: args.body,
         threadId: args.thread_id,
+        ...copies(args),
       });
       return text(`Replied on thread ${args.thread_id}`);
     },
