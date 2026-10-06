@@ -8,7 +8,11 @@ There is **no local stdio catalog** — stdio-only clients should use `mcp-remot
 
 **Claude (OAuth):** paste `https://mcp.openmail.sh/mcp`
 
-**Cursor (API key):**
+**Cursor (OAuth):** [Add to Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=openmail&config=eyJ1cmwiOiJodHRwczovL21jcC5vcGVubWFpbC5zaC9tY3AifQ==), or add the URL below without `headers`.
+
+**VS Code / any registry client:** listed in the [MCP Registry](https://registry.modelcontextprotocol.io) as `sh.openmail/openmail`.
+
+**Cursor or headless agents (API key):**
 
 ```json
 {
