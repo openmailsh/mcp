@@ -7,17 +7,17 @@ import type { SessionContext } from "./session.js";
 /**
  * PostHog MCP Analytics: one `$mcp_tool_call` per tool call (tool, client,
  * latency, error, intent), plus `$mcp_initialize` / `$mcp_tools_list`.
- * Same project and env names as the API (`POSTHOG_API_KEY`, `POSTHOG_HOST`);
- * unset key = analytics off, which is what local dev and tests want.
+ * Same project and env name as the API (`POSTHOG_API_KEY`); unset = analytics
+ * off, which is what local dev and tests want.
  */
 let client: PostHog | null | undefined;
+
+const POSTHOG_HOST = "https://eu.i.posthog.com";
 
 export function posthogClient(): PostHog | null {
   if (client !== undefined) return client;
   const key = process.env.POSTHOG_API_KEY;
-  client = key
-    ? new PostHog(key, { host: process.env.POSTHOG_HOST || "https://eu.i.posthog.com" })
-    : null;
+  client = key ? new PostHog(key, { host: POSTHOG_HOST }) : null;
   return client;
 }
 
