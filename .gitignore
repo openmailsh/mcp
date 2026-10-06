@@ -3,3 +3,7 @@ dist/
 .env
 *.log
 .DS_Store
+
+# MCP Registry DNS-auth private key, never committed
+key.pem
+*.pem
