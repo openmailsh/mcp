@@ -1,6 +1,7 @@
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpServer } from "./server.js";
+import { instrumentServer } from "./analytics.js";
 import { ApiError, createOpenMailApi, type MeResponse } from "./openmail.js";
 import { INSTALL_MARKDOWN } from "./format.js";
 import { verifyMcpAccessToken, mcpIssuer, mcpResource } from "./jwt.js";
@@ -240,9 +241,14 @@ export function createApp(): express.Express {
     };
     const api = ctx.token ? createOpenMailApi(API_URL, ctx.token) : null;
     const server = createMcpServer({ ctx, api, me: auth.me });
+    instrumentServer(server, { ctx, me: auth.me });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableDnsRebindingProtection: false,
+      // Stateless: a fresh server per request. JSON (not SSE) responses let
+      // the analytics SDK put client name/version in Mcp-Session-Id so later
+      // requests on other pods still know who is calling.
+      enableJsonResponse: true,
     });
     res.on("close", () => {
       void transport.close();
