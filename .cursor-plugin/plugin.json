@@ -11,5 +11,7 @@
   "repository": "https://github.com/openmailsh/mcp",
   "license": "MIT",
   "keywords": ["email", "inbox", "mail", "agent", "mcp", "oauth"],
-  "logo": "assets/logo.png"
+  "category": "productivity",
+  "logo": "assets/logo.png",
+  "mcpServers": "./mcp.json"
 }
