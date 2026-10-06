@@ -11,10 +11,5 @@
   "repository": "https://github.com/openmailsh/mcp",
   "license": "MIT",
   "keywords": ["email", "inbox", "mail", "agent", "mcp", "oauth"],
-  "mcpServers": {
-    "openmail": {
-      "type": "http",
-      "url": "https://mcp.openmail.sh/mcp"
-    }
-  }
+  "mcpServers": "./.mcp.json"
 }

@@ -1,0 +1,6 @@
+{
+  "openmail": {
+    "type": "http",
+    "url": "https://mcp.openmail.sh/mcp"
+  }
+}
