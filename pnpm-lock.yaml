@@ -11,12 +11,18 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.24.3
         version: 1.30.0(zod@3.25.76)
+      '@posthog/mcp':
+        specifier: ^0.22.0
+        version: 0.22.0(@modelcontextprotocol/sdk@1.30.0(zod@3.25.76))(posthog-node@5.55.0)
       express:
         specifier: ^4.21.2
         version: 4.22.2
       jose:
         specifier: ^6.1.3
         version: 6.2.12
+      posthog-node:
+        specifier: ^5.55.0
+        version: 5.55.0
       zod:
         specifier: ^3.24.2
         version: 3.25.76
@@ -232,6 +238,25 @@ packages:
 
   '@paralleldrive/cuid2@2.3.1':
     resolution: {integrity: sha512-XO7cAxhnTZl0Yggq6jOgjiOHhbgcO4NqFqwSmQpjK3b6TEE6Uj/jfSk6wzYyemh3+I0sHirKSetjQwn5cZktFw==}
+
+  '@posthog/core@1.56.1':
+    resolution: {integrity: sha512-aeoHdWDWy9LN1wfQgwRYDDiJPZb1aYvrhlqTQ8p6L0WZRTsbLHLsHBqqSfvfkyIFACA/UV5A/zQjyhqqvlJwRg==}
+
+  '@posthog/mcp@0.22.0':
+    resolution: {integrity: sha512-SJb4VdOjYgMK1QvmAWP59MEb0FO7CYwGf9DMZ1tIIyz7u33KUGOXPf28C4kEleK559cSC76LYbwlOIUQ0q+dCQ==}
+    engines: {node: ^20.20.0 || >=22.22.0}
+    peerDependencies:
+      '@modelcontextprotocol/sdk': '>=1.26.0'
+      '@modelcontextprotocol/server': '>=2.0.0'
+      posthog-node: ^5.0.0
+    peerDependenciesMeta:
+      '@modelcontextprotocol/sdk':
+        optional: true
+      '@modelcontextprotocol/server':
+        optional: true
+
+  '@posthog/types@1.414.0':
+    resolution: {integrity: sha512-RlgWQOP1fua0hZDfBu7q8wb04OSYEkdCzEKh2UYgITr6b1Xl8c3j32QxkYev3G9jiVNz3PdjGmc5dQ3QsJqXMA==}
 
   '@rollup/rollup-android-arm-eabi@4.63.1':
     resolution: {integrity: sha512-UZ8sUxPTiHWYX9QNdJedb1kDZSpS1t/VPWBWGSgqHNi9w3Cu6IXvu2mzbhiTiPvtrqgTQJ+zqiAq2iPIPilpaQ==}
@@ -908,6 +933,15 @@ packages:
     resolution: {integrity: sha512-RRuzqDtt5Y9h3quz5hWhK+TPnsmVs6WwSU6LkJMeY4HstUEDuYTG8UJSdawMRzmzAtV+KEoG8N3Qg2qLy5vM/A==}
     engines: {node: ^10 || ^12 || >=14}
 
+  posthog-node@5.55.0:
+    resolution: {integrity: sha512-8dFtlDTqs0CKGZ8t4mUnk4NdShAgzru3B9D0MfM/NTBzlRyAjctivzWINLtMLRQxYjvgBohxy7RTwiQf4mPycQ==}
+    engines: {node: ^20.20.0 || >=22.22.0}
+    peerDependencies:
+      rxjs: ^7.0.0
+    peerDependenciesMeta:
+      rxjs:
+        optional: true
+
   proxy-addr@2.0.7:
     resolution: {integrity: sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==}
     engines: {node: '>= 0.10'}
@@ -1295,6 +1329,19 @@ snapshots:
   '@paralleldrive/cuid2@2.3.1':
     dependencies:
       '@noble/hashes': 1.8.0
+
+  '@posthog/core@1.56.1':
+    dependencies:
+      '@posthog/types': 1.414.0
+
+  '@posthog/mcp@0.22.0(@modelcontextprotocol/sdk@1.30.0(zod@3.25.76))(posthog-node@5.55.0)':
+    dependencies:
+      '@posthog/core': 1.56.1
+      posthog-node: 5.55.0
+    optionalDependencies:
+      '@modelcontextprotocol/sdk': 1.30.0(zod@3.25.76)
+
+  '@posthog/types@1.414.0': {}
 
   '@rollup/rollup-android-arm-eabi@4.63.1':
     optional: true
@@ -1982,6 +2029,10 @@ snapshots:
       nanoid: 3.3.19
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  posthog-node@5.55.0:
+    dependencies:
+      '@posthog/core': 1.56.1
 
   proxy-addr@2.0.7:
     dependencies:

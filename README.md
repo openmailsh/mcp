@@ -36,6 +36,9 @@ Keys and transcripts: over OAuth (Claude, Cursor sign-in) `setup_agent_email` an
 | `MCP_JWT_SECRET` | Same secret as the API. Required in production; outside production falls back to `NEXTAUTH_SECRET` |
 | `CONSOLE_ORIGIN` | Consent page host |
 | `PORT` | Listen port |
+| `POSTHOG_API_KEY` | Turns on [PostHog MCP Analytics](https://posthog.com/docs/mcp-analytics) (`$mcp_tool_call` per call). Unset = off |
+| `POSTHOG_HOST` | Defaults to `https://eu.i.posthog.com` |
+| `MCP_ANALYTICS_DEBUG` | Set to log every captured analytics event |
 
 See `.env.example`.
 
