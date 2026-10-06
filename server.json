@@ -1,0 +1,25 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "sh.openmail/openmail",
+  "title": "OpenMail",
+  "description": "Gmail for agents: create inboxes, read and reply to mail, send email, manage domains. OAuth sign-in.",
+  "websiteUrl": "https://openmail.sh",
+  "repository": {
+    "url": "https://github.com/openmailsh/mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "icons": [
+    {
+      "src": "https://openmail.sh/apple-touch-icon.png",
+      "mimeType": "image/png",
+      "sizes": ["180x180"]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.openmail.sh/mcp"
+    }
+  ]
+}
