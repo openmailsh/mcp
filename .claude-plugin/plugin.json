@@ -8,6 +8,7 @@
     "url": "https://openmail.sh"
   },
   "homepage": "https://docs.openmail.sh/integrations/mcp",
+  "privacyPolicyUrl": "https://openmail.sh/privacy",
   "repository": "https://github.com/openmailsh/mcp",
   "license": "MIT",
   "keywords": ["email", "inbox", "mail", "agent", "mcp", "oauth"],
