@@ -26,7 +26,7 @@ Attachments show a `message:` id under the filename in `read_thread`. Pass that 
 
 Replying to something you received: `reply_to_thread` with the `thread_id`, always. It keeps the headers intact so the recipient's mail client shows one conversation. Starting a conversation that does not exist yet: `send_email` with `to`, `subject`, `body`.
 
-Both tools are flagged destructive, so the client asks the user before anything leaves the inbox. Make that confirmation easy: show the recipient and the full body first, as you would send it. One recipient per message; use `cc` for others.
+Before you call either one, show the user the recipient and the full body exactly as it will go, and wait for their go. Do not call the tool and let the permission prompt do the asking; the prompt shows raw arguments, your draft shows the mail. Both tools are flagged destructive, so the client asks once more at send time. One recipient per message; use `cc` for others.
 
 Do not invent a From address. Mail leaves from the inbox you pass (or the only inbox you have); if the user wants a different sender, that is a different inbox or a custom domain.
 
