@@ -8,7 +8,7 @@ There is **no local stdio catalog** — stdio-only clients should use `mcp-remot
 
 **Claude (OAuth):** paste `https://mcp.openmail.sh/mcp`
 
-**Cursor (OAuth):** [Add to Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=openmail&config=eyJ1cmwiOiJodHRwczovL21jcC5vcGVubWFpbC5zaC9tY3AifQ==), or add the URL below without `headers`. This repo is also a Cursor Marketplace plugin (`.cursor-plugin/plugin.json` + `mcp.json`).
+**Cursor (OAuth):** [Add to Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=openmail&config=eyJ1cmwiOiJodHRwczovL21jcC5vcGVubWFpbC5zaC9tY3AifQ==), or add the URL below without `headers`. Also on [cursor.directory](https://cursor.directory/plugins/openmail) as a plugin (`.cursor-plugin/plugin.json` + `mcp.json`).
 
 **Claude Code:** `claude mcp add --transport http openmail https://mcp.openmail.sh/mcp`, or install as a plugin (`.claude-plugin/plugin.json`).
 
