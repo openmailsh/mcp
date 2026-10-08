@@ -10,7 +10,7 @@ There is **no local stdio catalog** — stdio-only clients should use `mcp-remot
 
 **Cursor (OAuth):** [Add to Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=openmail&config=eyJ1cmwiOiJodHRwczovL21jcC5vcGVubWFpbC5zaC9tY3AifQ==), or add the URL below without `headers`. Also on [cursor.directory](https://cursor.directory/plugins/openmail) as a plugin (`.cursor-plugin/plugin.json` + `mcp.json`).
 
-**Claude Code:** `claude mcp add --transport http openmail https://mcp.openmail.sh/mcp`, or install as a plugin (`.claude-plugin/plugin.json`).
+**Claude Code:** `claude mcp add --transport http openmail https://mcp.openmail.sh/mcp`, or install as a plugin (`claude plugin marketplace add openmailsh/mcp`, then `claude plugin install openmail@openmailsh-mcp`): the plugin bundles the server with the `openmail` skill in `skills/`, which teaches the agent when to reach for email and how to handle a thread.
 
 **VS Code / any registry client:** listed in the [MCP Registry](https://registry.modelcontextprotocol.io) as `sh.openmail/openmail`.
 
