@@ -1,5 +1,6 @@
 {
   "name": "openmail",
+  "displayName": "OpenMail",
   "version": "0.1.0",
   "description": "Gmail for agents. Give the agent its own inbox: read mail that wants a reply, reply in-thread, send new mail, manage custom domains. Hosted MCP server, OAuth sign-in, nothing to install.",
   "author": {
@@ -8,7 +9,10 @@
     "url": "https://openmail.sh"
   },
   "homepage": "https://docs.openmail.sh/integrations/mcp",
+  "documentationUrl": "https://docs.openmail.sh/integrations/mcp",
+  "supportUrl": "mailto:support@openmail.sh",
   "privacyPolicyUrl": "https://openmail.sh/privacy",
+  "termsOfServiceUrl": "https://openmail.sh/terms",
   "repository": "https://github.com/openmailsh/mcp",
   "license": "MIT",
   "keywords": ["email", "inbox", "mail", "agent", "mcp", "oauth"],
