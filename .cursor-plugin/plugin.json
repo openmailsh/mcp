@@ -10,7 +10,7 @@
   "homepage": "https://docs.openmail.sh/integrations/mcp",
   "repository": "https://github.com/openmailsh/mcp",
   "license": "MIT",
-  "keywords": ["email", "inbox", "mail", "agent", "mcp", "oauth"],
+  "keywords": ["email", "inbox", "mail", "gmail", "send email", "reply", "verification code", "custom domain"],
   "category": "productivity",
   "logo": "assets/logo.png",
   "mcpServers": "./mcp.json"

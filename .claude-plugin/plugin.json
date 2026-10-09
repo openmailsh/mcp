@@ -15,6 +15,6 @@
   "termsOfServiceUrl": "https://openmail.sh/terms",
   "repository": "https://github.com/openmailsh/mcp",
   "license": "MIT",
-  "keywords": ["email", "inbox", "mail", "agent", "mcp", "oauth"],
+  "keywords": ["email", "inbox", "mail", "gmail", "send email", "reply", "verification code", "custom domain"],
   "mcpServers": "./.mcp.json"
 }
