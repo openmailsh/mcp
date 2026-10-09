@@ -21,6 +21,23 @@ describe("hosted MCP http", () => {
     );
   });
 
+  it("serves the domain-verification token as plain text only when configured", async () => {
+    const off = await request(createApp()).get("/.well-known/openai-challenge");
+    expect(off.status).toBe(404);
+
+    process.env.DOMAIN_CHALLENGE_PATH = "/.well-known/openai-challenge";
+    process.env.DOMAIN_CHALLENGE_TOKEN = "tok-123";
+    try {
+      const on = await request(createApp()).get("/.well-known/openai-challenge");
+      expect(on.status).toBe(200);
+      expect(on.headers["content-type"]).toMatch(/^text\/plain/);
+      expect(on.text).toBe("tok-123");
+    } finally {
+      delete process.env.DOMAIN_CHALLENGE_PATH;
+      delete process.env.DOMAIN_CHALLENGE_TOKEN;
+    }
+  });
+
   it("canonicalizes MCP_RESOURCE_URL with a /mcp suffix", async () => {
     const previous = process.env.MCP_RESOURCE_URL;
     process.env.MCP_RESOURCE_URL = "https://mcp.openmail.sh/mcp/";
