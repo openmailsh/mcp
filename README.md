@@ -14,6 +14,8 @@ There is **no local stdio catalog** — stdio-only clients should use `mcp-remot
 
 **VS Code / any registry client:** listed in the [MCP Registry](https://registry.modelcontextprotocol.io) as `sh.openmail/openmail`.
 
+**ChatGPT:** submitted to the Apps directory as a plugin ZIP built from `chatgpt/` (Agent Plugins manifest, listing copy, review test cases) plus the same `skills/openmail`. `pnpm build:chatgpt` writes `dist/openmail-chatgpt.zip` for upload at platform.openai.com.
+
 **Cursor or headless agents (API key):**
 
 ```json
@@ -44,6 +46,7 @@ Keys and transcripts: over OAuth (Claude, Cursor sign-in) `setup_agent_email` an
 | `PORT` | Listen port |
 | `POSTHOG_API_KEY` | Turns on [PostHog MCP Analytics](https://posthog.com/docs/mcp-analytics) (`$mcp_tool_call` per call). Unset = off |
 | `MCP_ANALYTICS_DEBUG` | Set to log every captured analytics event |
+| `DOMAIN_CHALLENGE_PATH` / `DOMAIN_CHALLENGE_TOKEN` | Serves the token as plain text at the path, for directory domain verification (OpenAI Apps). Unset = off |
 
 See `.env.example`.
 

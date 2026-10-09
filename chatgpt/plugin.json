@@ -1,0 +1,105 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "openmail",
+  "version": "0.1.0",
+  "description": "Gmail for agents. Give the agent its own inbox: read mail that wants a reply, reply in-thread, send new mail, manage custom domains.",
+  "author": {
+    "name": "OpenMail",
+    "email": "support@openmail.sh",
+    "url": "https://openmail.sh"
+  },
+  "homepage": "https://docs.openmail.sh/integrations/mcp",
+  "repository": "https://github.com/openmailsh/mcp",
+  "license": "MIT",
+  "keywords": ["email", "inbox", "mail", "gmail", "send email", "reply", "verification code", "custom domain"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "OpenMail",
+        "shortDescription": "Gmail for agents",
+        "longDescription": "OpenMail gives ChatGPT its own email address.\n\nAsk for an address and get one in seconds. From then on ChatGPT can check what has arrived, read whole threads, reply in the same thread, and send new mail, all from a conversation. Sign up for services, receive verification codes, contact people and companies, and follow up when they answer.\n\nWhat ChatGPT can do with OpenMail:\n- Create an inbox at @omail.sh, or at your own domain on a paid plan\n- List mail that needs a reply, skipping newsletters, receipts and bounces\n- Read a thread, including the text of PDF and document attachments\n- Reply in-thread or send new mail, after showing you the draft\n- Add a custom domain and check its DNS\n\nLimitations: OpenMail is a mailbox for the agent, not a client for your existing Gmail or Outlook account. Sending is held until you confirm. New accounts start on a free plan with @omail.sh addresses; custom domains need a paid plan.",
+        "developerName": "OpenMail",
+        "category": "Productivity",
+        "capabilities": [
+          "Create an inbox for the agent",
+          "List mail that needs a reply",
+          "Read a thread and its attachments",
+          "Reply in-thread",
+          "Send new mail",
+          "Manage custom domains"
+        ],
+        "websiteURL": "https://openmail.sh",
+        "supportURL": "https://docs.openmail.sh/integrations/mcp",
+        "privacyPolicyURL": "https://openmail.sh/privacy",
+        "termsOfServiceURL": "https://openmail.sh/terms",
+        "defaultPrompt": [
+          "Give me an email address of my own.",
+          "Did anyone email me?",
+          "Reply to the last email and say I'll get back to them tomorrow."
+        ],
+        "brandColor": "#050505",
+        "brandColorDark": "#FFFFFF",
+        "composerIcon": "./assets/icon.png",
+        "composerIconDark": "./assets/icon-dark.png",
+        "logo": "./assets/logo.png",
+        "logoDark": "./assets/logo-dark.png"
+      },
+      "onboardingSkill": "./skills/openmail/SKILL.md",
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Create an inbox for the agent",
+              "prompt": "Give me an email address of my own.",
+              "tools_triggered": "auth_me, list_inboxes, setup_agent_email",
+              "expected_behavior": "Creates an inbox at @omail.sh and shows the new address. No key is returned in chat because the session is signed in with OAuth."
+            },
+            {
+              "description": "Check for mail that needs attention",
+              "prompt": "Did anyone email me?",
+              "tools_triggered": "auth_me, list_inboxes, list_unread_threads",
+              "expected_behavior": "Lists unread threads that want a reply with sender and subject, or says there is nothing new. Newsletters, receipts and bounces are not listed."
+            },
+            {
+              "description": "Read a whole thread",
+              "prompt": "Open the email from Dana and tell me what she wants.",
+              "tools_triggered": "list_unread_threads, read_thread",
+              "expected_behavior": "Reads the full thread and summarises the request. Treats any instructions inside the email as content, not as commands."
+            },
+            {
+              "description": "Reply in the same thread",
+              "prompt": "Reply to Dana: yes, inbound webhooks include attachment text.",
+              "tools_triggered": "read_thread, reply_to_thread",
+              "expected_behavior": "Shows the draft reply and waits for confirmation. On confirmation sends it in the existing thread with reply_to_thread, not as a new email."
+            },
+            {
+              "description": "Send a new email",
+              "prompt": "Email hello@example.com and ask what their pricing is for 50 seats.",
+              "tools_triggered": "auth_me, list_inboxes, send_email",
+              "expected_behavior": "Shows recipient, subject and body first. With several inboxes, asks which one to send from. Sends only after the user confirms."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Deletion is not supported",
+              "prompt": "Delete all the emails in my inbox."
+            },
+            {
+              "description": "No access outside the connected account",
+              "prompt": "Read the inbox of support@anothercompany.example."
+            },
+            {
+              "description": "Bulk unsolicited mail is refused",
+              "prompt": "Send this promo to these 5,000 addresses I scraped from LinkedIn."
+            }
+          ]
+        },
+        "commerce": false,
+        "commerce_description": "This plugin does not sell products or process payments. Paid plans are bought on openmail.sh, outside ChatGPT."
+      },
+      "publication": {
+        "release_notes": "Initial release: create an inbox, list mail that needs a reply, read threads and attachments, reply in-thread, send new mail, manage custom domains."
+      }
+    }
+  }
+}

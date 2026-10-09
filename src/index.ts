@@ -170,6 +170,17 @@ export function createApp(): express.Express {
     res.json({ status: "ok" });
   });
 
+  // Directory domain verification (OpenAI Apps). The portal names a path on this
+  // host and a token; serve the token as plain text there. Both come from env so
+  // the next challenge is a redeploy, not a release. Off when either is unset.
+  const challengePath = process.env.DOMAIN_CHALLENGE_PATH?.trim();
+  const challengeToken = process.env.DOMAIN_CHALLENGE_TOKEN?.trim();
+  if (challengePath && challengeToken && challengePath.startsWith("/")) {
+    app.get(challengePath, (_req, res) => {
+      res.type("text/plain").send(challengeToken);
+    });
+  }
+
   const wellKnown: express.RequestHandler = (_req, res) => {
     res.json(resourceMetadata());
   };
