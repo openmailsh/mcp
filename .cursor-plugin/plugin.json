@@ -2,7 +2,7 @@
   "name": "openmail",
   "displayName": "OpenMail",
   "version": "0.1.0",
-  "description": "Gmail for agents. Give the agent its own inbox: read mail that wants a reply, reply in-thread, send new mail, manage custom domains. Hosted MCP server, OAuth sign-in, nothing to install.",
+  "description": "Gmail for agents. Give the agent its own inbox: read mail that wants a reply, reply in-thread, send new mail, manage custom domains.",
   "author": {
     "name": "OpenMail",
     "email": "support@openmail.sh"
