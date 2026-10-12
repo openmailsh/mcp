@@ -79,7 +79,9 @@ export function formatThread(thread: {
     const when = formatTimestamp(message.createdAt);
     const to = message.direction === "outbound" && message.toAddr ? ` to ${message.toAddr}` : "";
     lines.push(`## ${message.direction} from ${from}${to}${when ? ` — ${when}` : ""}`);
-    const meta: string[] = [];
+    // Every message's id: forward_message, delete_message, and
+    // get_attachment_text all take it.
+    const meta: string[] = [`message: ${message.id}`];
     if (message.category) meta.push(`category: ${message.category}`);
     if (message.direction === "inbound" && message.autoReplyable != null) {
       meta.push(
@@ -91,16 +93,48 @@ export function formatThread(thread: {
     if (meta.length) lines.push(meta.join(" · "));
     lines.push(clip(stripQuotedReply(message.bodyText || "") || "(empty body)", 6000));
     if (message.attachments?.length) {
-      // The message id is the handle get_attachment_text needs; without it an
-      // agent has nothing to pass but the thread id, which 404s.
       lines.push(
-        `attachments: ${message.attachments.map((a) => a.filename).join(", ")}`,
-        `message: ${message.id} (pass as message_id to get_attachment_text)`,
+        `attachments: ${message.attachments.map((a) => a.filename).join(", ")} (get_attachment_text with message_id ${message.id})`,
       );
     }
     lines.push("");
   }
   return lines.join("\n").trim();
+}
+
+export function formatSearch(
+  hits: Array<{
+    id: string;
+    threadId: string;
+    direction: string;
+    fromAddr: string;
+    toAddr?: string;
+    subject?: string | null;
+    bodyText?: string | null;
+    createdAt?: string;
+  }>,
+  info: { query: string; scanned: number; total: number; inbox?: { id: string; address?: string | null } },
+): string {
+  const scope = info.inbox ? ` in ${info.inbox.address || info.inbox.id}` : "";
+  // Say how far back we looked, so "no results" is not read as "never existed".
+  const coverage =
+    info.total > info.scanned
+      ? `Searched the newest ${info.scanned} of ${info.total} messages${scope}.`
+      : `Searched all ${info.scanned} messages${scope}.`;
+  if (hits.length === 0) return `No messages match "${info.query}". ${coverage}`;
+  return [
+    coverage,
+    ...hits.map((m) => {
+      const who = m.direction === "outbound" ? `to ${m.toAddr ?? "?"}` : `from ${m.fromAddr}`;
+      const when = formatTimestamp(m.createdAt);
+      const snippet = (m.bodyText ?? "").replace(/\s+/g, " ").trim().slice(0, 140);
+      return [
+        `- ${m.subject || "(no subject)"} ${who}${when ? ` — ${when}` : ""}`,
+        `  thread: ${m.threadId} · message: ${m.id}`,
+        ...(snippet ? [`  ${snippet}`] : []),
+      ].join("\n");
+    }),
+  ].join("\n");
 }
 
 function formatTimestamp(iso?: string): string {
@@ -183,15 +217,23 @@ export function formatDns(domain: {
 
 /**
  * The next step for errors agents hit in production (PostHog $mcp_tool_call).
- * Without one they retry the same call: one session sent 15 sends straight
- * into the new-recipient cap.
+ * Batch senders hit the new-recipient cap mid-batch and were told only "try
+ * after midnight"; one asked support how to raise it. Give them the numbers
+ * and the ways forward.
  */
 function errorHint(code: string, body: unknown): string | null {
-  const b = (body ?? {}) as { resetsAt?: unknown };
+  const b = (body ?? {}) as { resetsAt?: unknown; limit?: unknown; scope?: unknown };
   switch (code) {
     case "cold_outreach_limit": {
-      const until = typeof b.resetsAt === "string" ? ` before ${b.resetsAt}` : "";
-      return `Do not retry send_email to new recipients${until}; it will fail the same way. Replies with reply_to_thread are not capped. Tell the user the limit was reached.`;
+      const limit = typeof b.limit === "number" && b.limit > 0 ? `${b.limit} new recipients a day` : "a daily new-recipient limit";
+      const scope = typeof b.scope === "string" ? ` per ${b.scope}` : "";
+      const until = typeof b.resetsAt === "string" ? b.resetsAt : "midnight UTC";
+      return [
+        `Limit: ${limit}${scope}. Resets ${until}.`,
+        "Only first contact to an address that never wrote this inbox counts. Replies (reply_to_thread) and follow-ups to people already emailed still send now.",
+        "Hold the remaining new recipients until the reset; retrying before then fails the same way.",
+        "To raise the limit: upgrade the plan at https://console.openmail.sh/settings/billing, or ask support@openmail.sh for a review.",
+      ].join("\n");
     }
     case "reputation_suspended":
       return "Do not retry: every send from here fails until support lifts the suspension. Tell the user to contact support@openmail.sh. Reading mail still works.";

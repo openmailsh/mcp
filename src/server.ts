@@ -13,6 +13,7 @@ import {
   formatMe,
   formatThread,
   formatThreads,
+  formatSearch,
 } from "./format.js";
 
 function text(markdown: string, isError = false) {
@@ -34,6 +35,20 @@ function copies(args: { cc?: unknown; bcc?: unknown }): { cc?: string[]; bcc?: s
 
 /** Each unread thread costs one extra API read, so the page stays small. */
 const UNREAD_MAX = 20;
+/** No search endpoint yet: scan this many newest messages (100 per request). */
+const SEARCH_SCAN = 500;
+const SEARCH_MAX = 25;
+
+type SearchHit = {
+  id: string;
+  threadId: string;
+  direction: string;
+  fromAddr: string;
+  toAddr?: string;
+  subject?: string | null;
+  bodyText?: string | null;
+  createdAt?: string;
+};
 
 const THREAD_ID = z
   .string()
@@ -206,6 +221,13 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   add_domain: { title: "Add custom domain", destructiveHint: false, openWorldHint: false },
   verify_domain: { title: "Verify domain DNS", destructiveHint: false, idempotentHint: true, openWorldHint: false },
   mark_thread_read: { title: "Mark thread read", destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  search_mail: { title: "Search mail", readOnlyHint: true, openWorldHint: false },
+  // Changes where inbound mail is copied: not destructive, but reaches outside.
+  update_inbox: { title: "Update inbox settings", destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  // Thread delete moves to Trash (restorable 30 days); message delete does not.
+  delete_thread: { title: "Delete thread", destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  delete_message: { title: "Delete message", destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  forward_message: { title: "Forward message", destructiveHint: true, openWorldHint: true },
   // Mail leaves the system and cannot be recalled: destructive + open world.
   send_email: { title: "Send email", destructiveHint: true, openWorldHint: true },
   reply_to_thread: { title: "Reply to thread", destructiveHint: true, openWorldHint: true },
@@ -601,7 +623,7 @@ export function createMcpServer(input: {
     "read_thread",
     toolDesc({
       purpose: "Full thread as markdown, with autoReplyable flags.",
-      notFor: "Searching all mail (no search in v1).",
+      notFor: "Finding a thread you do not have the id of (use search_mail).",
       when: "Before replying.",
       triggers: "read this thread, show the conversation",
     }),
@@ -633,6 +655,200 @@ export function createMcpServer(input: {
       await loadThread(ctx, api, String(args.thread_id));
       await api.patch(`/v1/threads/${args.thread_id}`, { isRead: true });
       return text(`Marked ${args.thread_id} read.`);
+    },
+  );
+
+  add(
+    "search_mail",
+    toolDesc({
+      purpose: `Find messages by words in the subject, body, sender, or recipient. Scans the newest ${SEARCH_SCAN} messages of one inbox.`,
+      notFor: "Searching the docs (use search_docs).",
+      when: "You need an older thread or message and do not have its id.",
+      triggers: "find the email from, search my mail, where is the invoice",
+    }),
+    {
+      query: z.string().describe("Required. Words to match; every word must appear (case-insensitive)."),
+      inbox_id: z.string().optional(),
+      direction: z.enum(["inbound", "outbound"]).optional().describe("Only received or only sent mail."),
+      limit: z.number().int().optional().describe(`Max results, 1–${SEARCH_MAX}. Default 10.`),
+    },
+    async (args) => {
+      if (!api) return text("Sign in first.", true);
+      const words = String(args.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+      if (words.length === 0) return text("Pass a query, e.g. `invoice acme`.", true);
+      const inbox = await resolveInbox(ctx, api, args.inbox_id as string | undefined);
+      const max = Math.min(SEARCH_MAX, Math.max(1, Number(args.limit ?? 10) || 10));
+      const hits: SearchHit[] = [];
+      let scanned = 0;
+      let total = 0;
+      // The API has no search endpoint yet; page newest-first and stop early.
+      for (let offset = 0; offset < SEARCH_SCAN && hits.length < max; offset += 100) {
+        const params = new URLSearchParams({ limit: "100", offset: String(offset) });
+        if (args.direction) params.set("direction", String(args.direction));
+        const page = (await api.get(`/v1/inboxes/${inbox.id}/messages?${params}`)) as {
+          data?: SearchHit[];
+          total?: number;
+        };
+        const rows = page.data ?? [];
+        total = page.total ?? total;
+        scanned += rows.length;
+        for (const m of rows) {
+          const hay = [m.subject, m.fromAddr, m.toAddr, m.bodyText].filter(Boolean).join("\n").toLowerCase();
+          if (words.every((w) => hay.includes(w))) hits.push(m);
+          if (hits.length >= max) break;
+        }
+        if (rows.length < 100) break;
+      }
+      return text(formatSearch(hits, { query: String(args.query), scanned, total, inbox: inbox.defaulted ? inbox : undefined }));
+    },
+  );
+
+  add(
+    "forward_message",
+    toolDesc({
+      purpose: "Forward one message to another address, as a new thread from the same inbox.",
+      notFor: "Replying to the sender (use reply_to_thread). Not for forwarding all future mail (use update_inbox).",
+      when: "Someone else needs to see a message you received.",
+      triggers: "forward this email, send this to my colleague",
+    }),
+    {
+      thread_id: THREAD_ID,
+      message_id: z
+        .string()
+        .optional()
+        .describe("The `message:` id from read_thread. Omit to forward the latest inbound message."),
+      to: z.string().email(),
+      note: z.string().optional().describe("Text above the forwarded message."),
+      cc: CC_SCHEMA,
+      bcc: BCC_SCHEMA,
+    },
+    async (args) => {
+      if (!api) return text("Sign in first.", true);
+      const thread = await loadThread(ctx, api, String(args.thread_id));
+      const messages = thread.data ?? [];
+      const msg = args.message_id
+        ? messages.find((m) => m.id === args.message_id)
+        : [...messages].reverse().find((m) => m.direction === "inbound") ?? messages[messages.length - 1];
+      if (!msg) {
+        return text(
+          args.message_id
+            ? `Message ${args.message_id} is not in thread ${args.thread_id}. Call read_thread for its message ids.`
+            : `Thread ${args.thread_id} has no messages to forward.`,
+          true,
+        );
+      }
+      const subject = thread.subject ?? "";
+      const files = msg.attachments?.map((a) => a.filename) ?? [];
+      const body = [
+        ...(args.note ? [String(args.note), ""] : []),
+        "---------- Forwarded message ----------",
+        `From: ${msg.fromAddr}`,
+        ...(msg.createdAt ? [`Date: ${msg.createdAt}`] : []),
+        `Subject: ${subject}`,
+        ...(msg.toAddr ? [`To: ${msg.toAddr}`] : []),
+        "",
+        msg.bodyText ?? "",
+        ...(files.length ? ["", `[Attachments not included: ${files.join(", ")}]`] : []),
+      ].join("\n");
+      const sent = (await api.post(`/v1/inboxes/${thread.inboxId}/send`, {
+        to: args.to,
+        subject: /^fwd?:/i.test(subject) ? subject : `Fwd: ${subject}`.trim(),
+        body,
+        ...copies(args),
+      })) as { threadId?: string };
+      const note = files.length ? `\nAttachments were not forwarded: ${files.join(", ")}` : "";
+      return text(`Forwarded ${msg.id} to ${args.to}${sent.threadId ? `\nthread: ${sent.threadId}` : ""}${note}`);
+    },
+  );
+
+  add(
+    "update_inbox",
+    toolDesc({
+      purpose: "Change an inbox's display name or auto-forwarding (copy inbound mail to another address).",
+      notFor: "Forwarding one message (use forward_message).",
+      when: "The user wants inbound mail copied to their own address, or forwarding stopped.",
+      triggers: "forward all mail to my gmail, stop forwarding, rename inbox",
+    }),
+    {
+      inbox_id: z.string().optional(),
+      display_name: z.string().nullable().optional(),
+      forward_to: z
+        .string()
+        .email()
+        .nullable()
+        .optional()
+        .describe("Address that gets a copy of inbound mail. null stops forwarding. Addresses outside the organisation must confirm by email first."),
+      forward_when: z
+        .enum(["always", "needs_human", "webhook_failed"])
+        .optional()
+        .describe("always (default); needs_human = only mail the agent should not auto-handle; webhook_failed = only when webhook delivery failed."),
+    },
+    async (args) => {
+      if (!api) return text("Sign in first.", true);
+      const patch: Record<string, unknown> = {};
+      if (args.display_name !== undefined) patch.displayName = args.display_name;
+      if (args.forward_to !== undefined) patch.forwardTo = args.forward_to;
+      if (args.forward_when !== undefined) patch.forwardWhen = args.forward_when;
+      if (Object.keys(patch).length === 0) {
+        return text("Nothing to change. Pass display_name, forward_to, or forward_when.", true);
+      }
+      const id = await resolveInboxId(ctx, api, args.inbox_id as string | undefined);
+      const inbox = (await api.patch(`/v1/inboxes/${id}`, patch)) as {
+        id: string;
+        address: string;
+        displayName?: string | null;
+        forwardTo?: string | null;
+        forwardWhen?: string | null;
+        forwardStatus?: string | null;
+      };
+      const fwd = inbox.forwardTo
+        ? `\nforwarding: ${inbox.forwardTo} (${inbox.forwardWhen ?? "always"}, ${inbox.forwardStatus ?? "pending"})${
+            inbox.forwardStatus === "pending" ? "\nNothing is forwarded until the address clicks the confirmation link we emailed." : ""
+          }`
+        : "\nforwarding: off";
+      return text(`${formatInbox(inbox)}${fwd}`);
+    },
+  );
+
+  add(
+    "delete_thread",
+    toolDesc({
+      purpose: "Move a thread and all its messages to Trash. Restorable from the console for 30 days.",
+      notFor: "Marking handled mail (use mark_thread_read).",
+      when: "The user asks to delete a conversation.",
+      triggers: "delete this thread, trash this conversation",
+    }),
+    { thread_id: THREAD_ID },
+    async (args) => {
+      if (!api) return text("Sign in first.", true);
+      await loadThread(ctx, api, String(args.thread_id));
+      await api.delete(`/v1/threads/${args.thread_id}`);
+      return text(`Moved thread ${args.thread_id} to Trash (restorable in the console for 30 days).`);
+    },
+  );
+
+  add(
+    "delete_message",
+    toolDesc({
+      purpose: "Delete one message from a thread. Not restorable.",
+      notFor: "Deleting a whole conversation (use delete_thread, which can be undone).",
+      when: "The user asks to remove one specific message.",
+      triggers: "delete this message",
+    }),
+    {
+      thread_id: THREAD_ID,
+      message_id: z.string().describe("Required. The `message:` id from read_thread."),
+    },
+    async (args) => {
+      if (!api) return text("Sign in first.", true);
+      // Load through the thread so an inbox-locked session cannot reach
+      // a message in another inbox by id.
+      const thread = await loadThread(ctx, api, String(args.thread_id));
+      if (!thread.data?.some((m) => m.id === args.message_id)) {
+        return text(`Message ${args.message_id} is not in thread ${args.thread_id}. Call read_thread for its message ids.`, true);
+      }
+      await api.delete(`/v1/messages/${args.message_id}`);
+      return text(`Deleted message ${args.message_id}.`);
     },
   );
 

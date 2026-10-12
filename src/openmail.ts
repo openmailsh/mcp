@@ -13,6 +13,7 @@ export type OpenMailApi = {
   get: (path: string) => Promise<unknown>;
   post: (path: string, body?: unknown) => Promise<unknown>;
   patch: (path: string, body?: unknown) => Promise<unknown>;
+  delete: (path: string) => Promise<unknown>;
 };
 
 export function createOpenMailApi(
@@ -66,6 +67,7 @@ export function createOpenMailApi(
     get: (path) => request("GET", path),
     post: (path, body) => request("POST", path, body ?? {}),
     patch: (path, body) => request("PATCH", path, body ?? {}),
+    delete: (path) => request("DELETE", path),
   };
 }
 

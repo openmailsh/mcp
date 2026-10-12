@@ -162,7 +162,9 @@ async function oauthToken(scope: string) {
 const sorted = (names: readonly string[]) => [...names].sort();
 const without = (names: readonly string[], ...drop: string[]) => sorted(names.filter((n) => !drop.includes(n)));
 
-const WRITE_TOOLS = ["setup_agent_email", "send_email", "reply_to_thread", "mark_thread_read", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain"];
+const WRITE_TOOLS = ["setup_agent_email", "send_email", "reply_to_thread", "forward_message", "mark_thread_read", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain", "update_inbox", "delete_thread", "delete_message"];
+/** The API refuses these to every OAuth token, so OAuth sessions never list them. */
+const API_KEY_ONLY = ["update_inbox", "delete_thread", "delete_message"];
 
 // ---------------------------------------------------------------------------
 // Tool surface per endpoint / credential
@@ -220,8 +222,8 @@ describe("tools/list", () => {
     expect(await toolNames(client)).toEqual(
       sorted([
         "search_docs", "get_docs", "auth_me", "send_mcp_feedback",
-        "get_inbox", "list_unread_threads", "read_thread", "get_attachment_text",
-        "mark_thread_read", "send_email", "reply_to_thread",
+        "get_inbox", "list_unread_threads", "read_thread", "get_attachment_text", "search_mail",
+        "mark_thread_read", "send_email", "reply_to_thread", "forward_message",
       ]),
     );
   });
@@ -229,13 +231,13 @@ describe("tools/list", () => {
   it("a read-only OAuth token keeps mark_thread_read but loses send, setup, and domain writes", async () => {
     const client = await connect("/mcp", await oauthToken("read"));
     expect(await toolNames(client)).toEqual(
-      without(ALL_TOOLS, "setup_agent_email", "send_email", "reply_to_thread", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain"),
+      without(ALL_TOOLS, "setup_agent_email", "send_email", "reply_to_thread", "forward_message", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain", ...API_KEY_ONLY),
     );
   });
 
-  it("an OAuth token with every scope matches the account-wide key", async () => {
+  it("an OAuth token with every scope matches the account-wide key, minus API-key-only tools", async () => {
     const client = await connect("/mcp", await oauthToken("read setup send domains"));
-    expect(await toolNames(client)).toEqual(sorted(ALL_TOOLS));
+    expect(await toolNames(client)).toEqual(without(ALL_TOOLS, ...API_KEY_ONLY));
   });
 });
 
@@ -582,16 +584,18 @@ describe("mailbox tools", () => {
     expect(api.calls("GET", /^\/v1\/domains\/dom-1$/)).toHaveLength(1);
   });
 
-  it("a new-recipient cap tells the agent not to retry and when it resets", async () => {
+  it("a new-recipient cap gives the limit, the reset, what still sends, and how to raise it", async () => {
     api.state.sendFailure = {
       status: 429,
-      body: { error: "cold_outreach_limit", message: "You've reached today's limit of new recipients.", resetsAt: "2026-10-13T00:00:00.000Z" },
+      body: { error: "cold_outreach_limit", message: "You've reached today's limit of new recipients.", limit: 25, scope: "inbox", resetsAt: "2026-10-13T00:00:00.000Z" },
     };
     const client = await connect("/mcp", ACCOUNT_KEY);
     const result = await call(client, "send_email", { to: "x@example.com", subject: "Hi", body: "Hello", inbox_id: "inbox-a" });
     expect(result.isError).toBe(true);
-    expect(result.text).toContain("Do not retry");
+    expect(result.text).toContain("Limit: 25 new recipients a day per inbox");
     expect(result.text).toContain("2026-10-13T00:00:00.000Z");
+    expect(result.text).toContain("reply_to_thread");
+    expect(result.text).toContain("settings/billing");
   });
 
   it("reply_to_thread on a thread with only outbound mail replies to its recipient", async () => {
@@ -647,5 +651,83 @@ describe("mailbox tools", () => {
     expect(result.isError).toBe(false);
     expect(result.text).toContain("om_minted_");
     expect(api.calls("POST", /^\/v1\/inboxes\/inbox-1\/api-keys$/)).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tools requested in enterprise feedback: search, forward, auto-forward, delete
+// ---------------------------------------------------------------------------
+
+describe("search, forward, and delete", () => {
+  it("search_mail matches every word across subject, sender, and body, and says how far it looked", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const hit = await call(client, "search_mail", { query: "invoice human", inbox_id: "inbox-a" });
+    expect(hit.isError).toBe(false);
+    expect(hit.text).toContain("thread: thread-a1 · message: msg-a1");
+    expect(hit.text).toContain("Searched all 2 messages");
+    const miss = await call(client, "search_mail", { query: "invoice deals", inbox_id: "inbox-a" });
+    expect(miss.text).toMatch(/^No messages match/);
+  });
+
+  it("search_mail on an inbox-scoped key cannot reach another inbox", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    const result = await call(client, "search_mail", { query: "hello", inbox_id: "inbox-b" });
+    expect(result.isError).toBe(true);
+    expect(api.calls("GET", /\/v1\/inboxes\/inbox-b\/messages/)).toHaveLength(0);
+  });
+
+  it("forward_message sends the latest inbound as Fwd: from the thread's inbox, noting skipped attachments", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "forward_message", { thread_id: "thread-a1", to: "boss@example.com", note: "FYI" });
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("invoice.pdf");
+    const [sent] = api.calls("POST", /^\/v1\/inboxes\/inbox-a\/send$/);
+    const body = sent.body as { to: string; subject: string; body: string; threadId?: string };
+    expect(body).toMatchObject({ to: "boss@example.com", subject: "Fwd: Invoice question" });
+    expect(body.threadId).toBeUndefined();
+    expect(body.body).toMatch(/^FYI\n\n---------- Forwarded message ----------\nFrom: human@example\.com/);
+    expect(body.body).toContain("Where is my invoice?");
+  });
+
+  it("forward_message refuses a message id that is not in the thread", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "forward_message", { thread_id: "thread-a1", message_id: "msg-b1", to: "x@example.com" });
+    expect(result.isError).toBe(true);
+    expect(api.calls("POST", /\/send$/)).toHaveLength(0);
+  });
+
+  it("update_inbox sets auto-forwarding and says it waits for confirmation, then turns it off", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const on = await call(client, "update_inbox", { inbox_id: "inbox-a", forward_to: "me@gmail.com", forward_when: "needs_human" });
+    expect(on.isError).toBe(false);
+    expect(on.text).toContain("forwarding: me@gmail.com (needs_human, pending)");
+    expect(on.text).toContain("confirmation link");
+    expect(api.calls("PATCH", /^\/v1\/inboxes\/inbox-a$/)[0].body).toEqual({ forwardTo: "me@gmail.com", forwardWhen: "needs_human" });
+    const off = await call(client, "update_inbox", { inbox_id: "inbox-a", forward_to: null });
+    expect(off.text).toContain("forwarding: off");
+  });
+
+  it("delete_thread trashes the thread; delete_message removes one message", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const msg = await call(client, "delete_message", { thread_id: "thread-a1", message_id: "msg-a1" });
+    expect(msg.isError).toBe(false);
+    expect(api.state.threads["thread-a1"].messages).toHaveLength(0);
+    const thread = await call(client, "delete_thread", { thread_id: "thread-a2" });
+    expect(thread.isError).toBe(false);
+    expect(thread.text).toContain("Trash");
+    expect(api.state.threads["thread-a2"].trashed).toBe(true);
+  });
+
+  it("delete_message will not delete a message from another thread", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "delete_message", { thread_id: "thread-a1", message_id: "msg-b1" });
+    expect(result.isError).toBe(true);
+    expect(api.calls("DELETE", /^\/v1\/messages\//)).toHaveLength(0);
+  });
+
+  it("read_thread prints every message id so forward and delete can target one", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "read_thread", { thread_id: "thread-a2" });
+    expect(result.text).toContain("message: msg-a2");
   });
 });

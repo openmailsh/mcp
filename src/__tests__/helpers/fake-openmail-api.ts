@@ -27,9 +27,17 @@ export type FakeThread = {
   isRead: boolean;
   lastMessageAt: string;
   messages: FakeMessage[];
+  trashed?: boolean;
 };
 
-export type FakeInbox = { id: string; address: string; displayName?: string | null };
+export type FakeInbox = {
+  id: string;
+  address: string;
+  displayName?: string | null;
+  forwardTo?: string | null;
+  forwardWhen?: string | null;
+  forwardStatus?: string | null;
+};
 
 export type FakeState = {
   /** bearer token → who it is. Anything else is 401. */
@@ -137,6 +145,47 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
       return json(201, inbox);
     }
 
+    if ((m = path.match(/^\/v1\/inboxes\/([^/]+)$/)) && method === "PATCH") {
+      const inbox = state.inboxes.find((i) => i.id === m![1]);
+      if (!inbox) return json(404, { error: "not_found", message: "Inbox not found" });
+      const b = (body ?? {}) as { displayName?: string | null; forwardTo?: string | null; forwardWhen?: string };
+      if (b.displayName !== undefined) inbox.displayName = b.displayName;
+      if (b.forwardTo !== undefined) {
+        inbox.forwardTo = b.forwardTo;
+        inbox.forwardStatus = b.forwardTo ? "pending" : null;
+        inbox.forwardWhen = b.forwardTo ? (b.forwardWhen ?? inbox.forwardWhen ?? "always") : null;
+      } else if (b.forwardWhen !== undefined) inbox.forwardWhen = b.forwardWhen;
+      return json(200, inbox);
+    }
+
+    if ((m = path.match(/^\/v1\/inboxes\/([^/]+)\/messages$/)) && method === "GET") {
+      const direction = url.searchParams.get("direction");
+      const limit = Number(url.searchParams.get("limit") ?? 50);
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const all = Object.values(state.threads)
+        .filter((t) => t.inboxId === m![1] && !t.trashed)
+        .flatMap((t) => t.messages.map((msg) => ({ ...msg, threadId: t.id, subject: t.subject })))
+        .filter((msg) => !direction || msg.direction === direction)
+        .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+      return json(200, { data: all.slice(offset, offset + limit), total: all.length });
+    }
+
+    if ((m = path.match(/^\/v1\/threads\/([^/]+)$/)) && method === "DELETE") {
+      const t = state.threads[m[1]];
+      if (!t || t.trashed) return json(404, { error: "not_found", message: "Thread not found" });
+      t.trashed = true;
+      res.writeHead(204);
+      return res.end();
+    }
+
+    if ((m = path.match(/^\/v1\/messages\/([^/]+)$/)) && method === "DELETE") {
+      const t = Object.values(state.threads).find((x) => x.messages.some((msg) => msg.id === m![1]));
+      if (!t) return json(404, { error: "not_found", message: "Message not found" });
+      t.messages = t.messages.filter((msg) => msg.id !== m![1]);
+      res.writeHead(204);
+      return res.end();
+    }
+
     if ((m = path.match(/^\/v1\/inboxes\/([^/]+)$/)) && method === "GET") {
       const inbox = state.inboxes.find((i) => i.id === m![1]);
       return inbox ? json(200, inbox) : json(404, { error: "not_found", message: "Inbox not found" });
@@ -163,7 +212,7 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
 
     if ((m = path.match(/^\/v1\/threads\/([^/]+)\/messages$/)) && method === "GET") {
       const t = state.threads[m[1]];
-      if (!t) return json(404, { error: "not_found", message: "Thread not found" });
+      if (!t || t.trashed) return json(404, { error: "not_found", message: "Thread not found" });
       return json(200, {
         threadId: t.id,
         inboxId: t.inboxId,

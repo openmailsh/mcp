@@ -114,12 +114,13 @@ describe("visibleTools", () => {
         "list_unread_threads",
         "read_thread",
         "get_attachment_text",
+        "search_mail",
         "mark_thread_read",
         "list_domains",
         "get_domain",
       ].sort(),
     );
-    expect(tools).toHaveLength(12);
+    expect(tools).toHaveLength(13);
   });
 });
 
