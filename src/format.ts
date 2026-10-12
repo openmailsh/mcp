@@ -181,12 +181,36 @@ export function formatDns(domain: {
   return lines.join("\n");
 }
 
+/**
+ * The next step for errors agents hit in production (PostHog $mcp_tool_call).
+ * Without one they retry the same call: one session sent 15 sends straight
+ * into the new-recipient cap.
+ */
+function errorHint(code: string, body: unknown): string | null {
+  const b = (body ?? {}) as { resetsAt?: unknown };
+  switch (code) {
+    case "cold_outreach_limit": {
+      const until = typeof b.resetsAt === "string" ? ` before ${b.resetsAt}` : "";
+      return `Do not retry send_email to new recipients${until}; it will fail the same way. Replies with reply_to_thread are not capped. Tell the user the limit was reached.`;
+    }
+    case "reputation_suspended":
+      return "Do not retry: every send from here fails until support lifts the suspension. Tell the user to contact support@openmail.sh. Reading mail still works.";
+    case "invalid_domain":
+      return "Call list_domains: only domains shown as verified work, and a domain scoped to a pod needs that pod_id. Omit domain to use omail.sh.";
+    default:
+      return null;
+  }
+}
+
 export function formatApiError(err: {
   status: number;
   code: string;
   message: string;
+  body?: unknown;
 }): string {
-  return `OpenMail API ${err.status} (${err.code}): ${err.message}`;
+  const line = `OpenMail API ${err.status} (${err.code}): ${err.message}`;
+  const hint = errorHint(err.code, err.body);
+  return hint ? `${line}\n${hint}` : line;
 }
 
 export function formatMe(me: {

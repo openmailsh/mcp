@@ -39,7 +39,13 @@ export type FakeState = {
   attachments: Record<string, { inboxId: string; text: string }>;
   /** When set, GET /v1/me answers with this instead of looking the token up (simulates an API outage). */
   meFailure?: { status: number; body?: unknown };
+  /** Custom domains. A domain with a podId only accepts inboxes created with that podId. */
+  domains?: FakeDomain[];
+  /** When set, POST /v1/inboxes/{id}/send answers with this (cap hit, suspension). */
+  sendFailure?: { status: number; body: unknown };
 };
+
+export type FakeDomain = { id: string; domain: string; status: string; podId: string | null };
 
 export type RecordedRequest = {
   method: string;
@@ -114,10 +120,17 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
     if (method === "GET" && path === "/v1/inboxes") return json(200, { data: state.inboxes });
 
     if (method === "POST" && path === "/v1/inboxes") {
-      const b = (body ?? {}) as { mailboxName?: string; displayName?: string };
+      const b = (body ?? {}) as { mailboxName?: string; displayName?: string; domain?: string; podId?: string };
+      const custom = b.domain ? state.domains?.find((d) => d.domain === b.domain) : undefined;
+      if (b.domain && b.domain !== "omail.sh" && !custom) {
+        return json(400, { error: "invalid_domain", message: "Domain is not verified or does not belong to your account" });
+      }
+      if (custom?.podId && custom.podId !== b.podId) {
+        return json(400, { error: "invalid_domain", message: "This domain is not available in the selected pod" });
+      }
       const inbox: FakeInbox = {
         id: `inbox-new-${++seq}`,
-        address: `${b.mailboxName ?? `agent${seq}`}@omail.sh`,
+        address: `${b.mailboxName ?? `agent${seq}`}@${b.domain ?? "omail.sh"}`,
         displayName: b.displayName ?? null,
       };
       state.inboxes.push(inbox);
@@ -139,6 +152,7 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
     }
 
     if ((m = path.match(/^\/v1\/inboxes\/([^/]+)\/send$/)) && method === "POST") {
+      if (state.sendFailure) return json(state.sendFailure.status, state.sendFailure.body);
       const b = (body ?? {}) as { threadId?: string };
       return json(201, { id: `msg-sent-${++seq}`, threadId: b.threadId ?? `thread-new-${seq}` });
     }
@@ -175,7 +189,13 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
     }
 
     if (method === "POST" && path === "/v1/feedback") return json(201, { ok: true });
-    if (method === "GET" && path === "/v1/domains") return json(200, { data: [] });
+    if (method === "GET" && path === "/v1/domains") return json(200, { data: state.domains ?? [] });
+
+    if ((m = path.match(/^\/v1\/domains\/([^/]+)(\/verify)?$/)) && (method === "GET" || method === "POST")) {
+      const d = state.domains?.find((x) => x.id === m![1]);
+      if (!d) return json(404, { error: "not_found", message: "Domain not found" });
+      return json(200, { ...d, records: [] });
+    }
 
     return json(404, { error: "not_found", message: `No fake route for ${method} ${path}` });
   });

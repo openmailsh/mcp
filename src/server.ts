@@ -32,6 +32,57 @@ function copies(args: { cc?: unknown; bcc?: unknown }): { cc?: string[]; bcc?: s
   return { ...(cc?.length ? { cc } : {}), ...(bcc?.length ? { bcc } : {}) };
 }
 
+/** Each unread thread costs one extra API read, so the page stays small. */
+const UNREAD_MAX = 20;
+
+const THREAD_ID = z
+  .string()
+  .describe("Required. Thread id from list_unread_threads or send_email output, not a message id.");
+const DOMAIN_REF = z
+  .string()
+  .describe("Required. Domain id or name (e.g. mail.acme.com) from list_domains or add_domain.");
+const POD_ID = z
+  .string()
+  .optional()
+  .describe("Pod to create the inbox in. Needed when the custom domain is scoped to a pod; list_domains shows it.");
+
+type DomainRow = { id: string; domain: string; status: string; podId?: string | null };
+
+async function listDomains(api: OpenMailApi): Promise<DomainRow[]> {
+  const listed = (await api.get("/v1/domains?limit=50")) as { data?: DomainRow[] };
+  return listed.data ?? [];
+}
+
+/**
+ * Agents pass the domain name as often as the id (list_domains used to print
+ * only names), which 404'd. Accept either.
+ */
+async function resolveDomainId(api: OpenMailApi, ref: string): Promise<string> {
+  if (!ref.includes(".")) return ref;
+  const wanted = ref.trim().toLowerCase();
+  const match = (await listDomains(api)).find((d) => d.domain.toLowerCase() === wanted);
+  if (!match) throw new Error(`No domain named ${ref} on this account. Call list_domains, or add_domain to add it.`);
+  return match.id;
+}
+
+/**
+ * A custom domain scoped to a pod only works for inboxes in that pod; without
+ * a podId the API uses the default pod and rejects it. Fill the pod in from
+ * the domain itself so the caller does not have to know.
+ */
+async function podForDomain(
+  api: OpenMailApi,
+  domain: unknown,
+  podId: unknown,
+): Promise<string | undefined> {
+  if (typeof podId === "string" && podId) return podId;
+  if (typeof domain !== "string" || !domain) return undefined;
+  const wanted = domain.trim().toLowerCase();
+  // Best effort: if the lookup fails, let the create call report the real error.
+  const rows = await listDomains(api).catch(() => [] as DomainRow[]);
+  return rows.find((d) => d.domain.toLowerCase() === wanted)?.podId ?? undefined;
+}
+
 function consoleOrigin(): string {
   return (process.env.CONSOLE_ORIGIN || "https://console.openmail.sh").replace(/\/+$/, "");
 }
@@ -202,7 +253,7 @@ export function createMcpServer(input: {
       when: "Before calling mailbox tools, or when unsure of an API field.",
       triggers: "how does openmail work, mcp setup, send email docs",
     }),
-    { query: z.string().describe("What you need to know") },
+    { query: z.string().describe("Required. What you need to know, in a few words.") },
     async (args) => text(await searchDocs(String(args.query ?? ""))),
   );
 
@@ -277,6 +328,7 @@ export function createMcpServer(input: {
       mailboxName: z.string().optional(),
       displayName: z.string().optional(),
       domain: z.string().optional(),
+      pod_id: POD_ID,
       mintKey: z.boolean().optional().describe("Mint an inbox-scoped key. Default true when execute is true."),
     },
     async (args) => {
@@ -303,10 +355,12 @@ export function createMcpServer(input: {
           ].join("\n"),
         );
       }
+      const podId = await podForDomain(api, args.domain, args.pod_id);
       const inbox = (await api.post("/v1/inboxes", {
         mailboxName: args.mailboxName,
         displayName: args.displayName,
         domain: args.domain,
+        ...(podId ? { podId } : {}),
       })) as { id: string; address: string; displayName?: string | null };
       let keyLine = "";
       if (args.mintKey !== false) {
@@ -375,14 +429,20 @@ export function createMcpServer(input: {
     {
       mailboxName: z.string().optional(),
       displayName: z.string().optional(),
-      domain: z.string().optional(),
+      domain: z
+        .string()
+        .optional()
+        .describe("omail.sh (default) or a verified custom domain from list_domains."),
+      pod_id: POD_ID,
     },
     async (args) => {
       if (!api) return text("Sign in first.", true);
+      const podId = await podForDomain(api, args.domain, args.pod_id);
       const inbox = (await api.post("/v1/inboxes", {
         mailboxName: args.mailboxName,
         displayName: args.displayName,
         domain: args.domain,
+        ...(podId ? { podId } : {}),
       })) as { id: string; address: string; displayName?: string | null };
       return text(formatInbox(inbox));
     },
@@ -463,7 +523,7 @@ export function createMcpServer(input: {
       triggers: "reply, answer this email",
     }),
     {
-      thread_id: z.string(),
+      thread_id: THREAD_ID,
       body: z.string(),
       cc: CC_SCHEMA,
       bcc: BCC_SCHEMA,
@@ -472,11 +532,13 @@ export function createMcpServer(input: {
     async (args) => {
       if (!api) return text("Sign in first.", true);
       const thread = await loadThread(ctx, api, String(args.thread_id));
-      const inbound = [...(thread.data ?? [])]
-        .reverse()
-        .find((m) => m.direction === "inbound");
-      const to = inbound?.fromAddr;
-      if (!to) return text("Could not find the inbound sender to reply to.", true);
+      const messages = [...(thread.data ?? [])].reverse();
+      // A follow-up on a thread the agent started has no inbound yet: reply
+      // to whoever the last outbound went to instead of failing.
+      const to =
+        messages.find((m) => m.direction === "inbound")?.fromAddr ??
+        messages.find((m) => m.direction === "outbound" && m.toAddr)?.toAddr;
+      if (!to) return text("This thread has no recipient to reply to. Use send_email to start a new thread.", true);
       await api.post(`/v1/inboxes/${thread.inboxId}/send`, {
         to,
         body: args.body,
@@ -497,13 +559,19 @@ export function createMcpServer(input: {
     }),
     {
       inbox_id: z.string().optional(),
-      limit: z.number().int().min(1).max(20).optional(),
+      limit: z
+        .number()
+        .int()
+        .optional()
+        .describe(`How many threads to check, 1–${UNREAD_MAX}. Larger values are capped at ${UNREAD_MAX}. Default 10.`),
     },
     async (args) => {
       if (!api) return text("Sign in first.", true);
       const inbox = await resolveInbox(ctx, api, args.inbox_id as string | undefined);
       const id = inbox.id;
-      const limit = Number(args.limit ?? 10);
+      // Clamp instead of rejecting: agents ask for 50 or 100, and a schema
+      // error there cost them the whole call.
+      const limit = Math.min(UNREAD_MAX, Math.max(1, Number(args.limit ?? 10) || 10));
       const listed = (await api.get(
         `/v1/inboxes/${id}/threads?isRead=false&limit=${limit}`,
       )) as {
@@ -537,7 +605,7 @@ export function createMcpServer(input: {
       when: "Before replying.",
       triggers: "read this thread, show the conversation",
     }),
-    { thread_id: z.string() },
+    { thread_id: THREAD_ID },
     async (args) => {
       if (!api) return text("Sign in first.", true);
       const full = await loadThread(ctx, api, String(args.thread_id));
@@ -559,7 +627,7 @@ export function createMcpServer(input: {
       when: "You replied or decided no reply is needed.",
       triggers: "mark as read, archive this",
     }),
-    { thread_id: z.string() },
+    { thread_id: THREAD_ID },
     async (args) => {
       if (!api) return text("Sign in first.", true);
       await loadThread(ctx, api, String(args.thread_id));
@@ -601,12 +669,13 @@ export function createMcpServer(input: {
     {},
     async () => {
       if (!api) return text("Sign in first.", true);
-      const listed = (await api.get("/v1/domains?limit=50")) as {
-        data: Array<{ domain: string; status: string }>;
-      };
-      const rows = listed.data ?? [];
+      const rows = await listDomains(api);
       if (rows.length === 0) return text("No custom domains.");
-      return text(rows.map((d) => `- ${d.domain} (${d.status})`).join("\n"));
+      return text(
+        rows
+          .map((d) => `- ${d.domain} (${d.status}) id: ${d.id}${d.podId ? ` pod: ${d.podId}` : ""}`)
+          .join("\n"),
+      );
     },
   );
 
@@ -618,10 +687,10 @@ export function createMcpServer(input: {
       when: "You have a domain id from list_domains or add_domain.",
       triggers: "show dns records",
     }),
-    { domain_id: z.string() },
+    { domain_id: DOMAIN_REF },
     async (args) => {
       if (!api) return text("Sign in first.", true);
-      const domain = (await api.get(`/v1/domains/${args.domain_id}`)) as {
+      const domain = (await api.get(`/v1/domains/${await resolveDomainId(api, String(args.domain_id))}`)) as {
         domain: string;
         status: string;
         records: Array<{
@@ -674,10 +743,10 @@ export function createMcpServer(input: {
       when: "The user says DNS is saved.",
       triggers: "verify domain, check dns",
     }),
-    { domain_id: z.string() },
+    { domain_id: DOMAIN_REF },
     async (args) => {
       if (!api) return text("Sign in first.", true);
-      const domain = (await api.post(`/v1/domains/${args.domain_id}/verify`)) as {
+      const domain = (await api.post(`/v1/domains/${await resolveDomainId(api, String(args.domain_id))}/verify`)) as {
         domain: string;
         status: string;
         records: Array<{

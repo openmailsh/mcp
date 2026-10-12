@@ -21,12 +21,8 @@ export function createOpenMailApi(
 ): OpenMailApi {
   const root = baseUrl.replace(/\/+$/, "");
 
-  async function request(
-    method: string,
-    path: string,
-    body?: unknown,
-  ): Promise<unknown> {
-    const res = await fetch(`${root}${path}`, {
+  async function send(method: string, path: string, body?: unknown): Promise<Response> {
+    const init = {
       method,
       headers: {
         Authorization: `Bearer ${token}`,
@@ -34,7 +30,23 @@ export function createOpenMailApi(
         "x-openmail-client": "mcp",
       },
       body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    };
+    try {
+      return await fetch(`${root}${path}`, init);
+    } catch (err) {
+      // A dropped connection ("fetch failed") is worth one retry on a read.
+      // Never on a write: a send that reached the API must not go out twice.
+      if (method !== "GET") throw err;
+      return fetch(`${root}${path}`, init);
+    }
+  }
+
+  async function request(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<unknown> {
+    const res = await send(method, path, body);
     const json = (await res.json().catch(() => ({}))) as {
       error?: string;
       message?: string;

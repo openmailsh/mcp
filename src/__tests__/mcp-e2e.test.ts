@@ -548,6 +548,67 @@ describe("mailbox tools", () => {
     expect(result.text).toMatch(/not found/i);
   });
 
+  // Each case below was a real error in production $mcp_tool_call events.
+
+  it("list_unread_threads caps an oversized limit instead of rejecting the call", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "list_unread_threads", { inbox_id: "inbox-a", limit: 100 });
+    expect(result.isError).toBe(false);
+    expect(api.calls("GET", /\/threads\?isRead=false&limit=20$/)).toHaveLength(1);
+  });
+
+  it("create_inbox on a pod-scoped domain fills in the domain's pod", async () => {
+    api.state.domains = [{ id: "dom-1", domain: "mail.acme.com", status: "verified", podId: "pod-9" }];
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "create_inbox", { mailboxName: "sales", domain: "mail.acme.com" });
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("sales@mail.acme.com");
+    expect(api.calls("POST", /^\/v1\/inboxes$/)[0].body).toMatchObject({ podId: "pod-9" });
+  });
+
+  it("create_inbox on an unknown domain says to call list_domains", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "create_inbox", { domain: "nope.example" });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("list_domains");
+  });
+
+  it("list_domains prints ids, and get_domain and verify_domain accept the name", async () => {
+    api.state.domains = [{ id: "dom-1", domain: "mail.acme.com", status: "verified", podId: null }];
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    expect((await call(client, "list_domains")).text).toContain("id: dom-1");
+    expect((await call(client, "get_domain", { domain_id: "mail.acme.com" })).isError).toBe(false);
+    expect((await call(client, "verify_domain", { domain_id: "mail.acme.com" })).isError).toBe(false);
+    expect(api.calls("GET", /^\/v1\/domains\/dom-1$/)).toHaveLength(1);
+  });
+
+  it("a new-recipient cap tells the agent not to retry and when it resets", async () => {
+    api.state.sendFailure = {
+      status: 429,
+      body: { error: "cold_outreach_limit", message: "You've reached today's limit of new recipients.", resetsAt: "2026-10-13T00:00:00.000Z" },
+    };
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "send_email", { to: "x@example.com", subject: "Hi", body: "Hello", inbox_id: "inbox-a" });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("Do not retry");
+    expect(result.text).toContain("2026-10-13T00:00:00.000Z");
+  });
+
+  it("reply_to_thread on a thread with only outbound mail replies to its recipient", async () => {
+    api.state.threads["thread-out"] = {
+      id: "thread-out",
+      inboxId: "inbox-a",
+      subject: "Intro",
+      isRead: true,
+      lastMessageAt: "2026-09-10T10:00:00Z",
+      messages: [{ id: "msg-out", direction: "outbound", fromAddr: "a@omail.sh", toAddr: "lead@example.com", bodyText: "Hi" }],
+    };
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "reply_to_thread", { thread_id: "thread-out", body: "Following up" });
+    expect(result.isError).toBe(false);
+    expect(api.calls("POST", /\/v1\/inboxes\/inbox-a\/send$/)[0].body).toMatchObject({ to: "lead@example.com" });
+  });
+
   it("setup_agent_email with execute creates an inbox and mints a scoped key through the API", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     const result = await call(client, "setup_agent_email", { execute: true, mailboxName: "helper" });
