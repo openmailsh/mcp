@@ -106,6 +106,12 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
     const token = auth?.startsWith("Bearer ") ? auth.slice(7) : null;
     const body = await readBody(req);
     requests.push({ method, path: url.pathname + url.search, token, headers: req.headers, body });
+    // Mirror the real API: a JSON content type with no body is rejected.
+    if (body === undefined && String(req.headers["content-type"] ?? "").includes("application/json")) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "empty_body", message: "Request body is required" }));
+      return;
+    }
 
     const json = (status: number, payload: unknown) => {
       res.writeHead(status, { "content-type": "application/json" });

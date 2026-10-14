@@ -137,7 +137,7 @@ export function formatSearch(
   ].join("\n");
 }
 
-function formatTimestamp(iso?: string): string {
+export function formatTimestamp(iso?: string): string {
   if (!iso) return "";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";

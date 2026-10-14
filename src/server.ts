@@ -14,13 +14,14 @@ import {
   formatThread,
   formatThreads,
   formatSearch,
+  formatTimestamp,
 } from "./format.js";
 
 function text(markdown: string, isError = false) {
   return { content: [{ type: "text" as const, text: markdown }], isError };
 }
 
-const CC_SCHEMA = z.array(z.string().email()).optional().describe("Visible copies.");
+const CC_SCHEMA = z.array(z.string().email()).optional().describe("People to copy on the email. Every recipient sees who was copied.");
 const BCC_SCHEMA = z
   .array(z.string().email())
   .optional()
@@ -52,14 +53,14 @@ type SearchHit = {
 
 const THREAD_ID = z
   .string()
-  .describe("Required. Thread id from list_unread_threads or send_email output, not a message id.");
+  .describe("Thread id from list_unread_threads, search_mail, or send_email output, not a message id.");
 const DOMAIN_REF = z
   .string()
-  .describe("Required. Domain id or name (e.g. mail.acme.com) from list_domains or add_domain.");
+  .describe("Domain id or name (e.g. mail.acme.com) from list_domains or add_domain.");
 const POD_ID = z
   .string()
   .optional()
-  .describe("Pod to create the inbox in. Needed when the custom domain is scoped to a pod; list_domains shows it.");
+  .describe("Pod to create the inbox in; list_domains shows each domain's pod. Omit to use the custom domain's pod, or the default pod for omail.sh.");
 const MAILBOX_NAME = z
   .string()
   .optional()
@@ -67,7 +68,7 @@ const MAILBOX_NAME = z
 const DISPLAY_NAME = z
   .string()
   .optional()
-  .describe("Sender name recipients see next to the address, e.g. `Acme Support`.");
+  .describe("Sender name recipients see next to the address, e.g. `Acme Support`. Omit to create the inbox without one; recipients then see only the address.");
 const INBOX_DOMAIN = z
   .string()
   .optional()
@@ -304,7 +305,7 @@ export function createMcpServer(input: {
     if (!allowed.has(name)) return;
     server.registerTool(
       name,
-      { description, inputSchema: schema, annotations: TOOL_ANNOTATIONS[name] },
+      { title: TOOL_ANNOTATIONS[name].title, description, inputSchema: schema, annotations: TOOL_ANNOTATIONS[name] },
       async (args) => {
         try {
           return await handler(args as Record<string, unknown>);
@@ -327,7 +328,7 @@ export function createMcpServer(input: {
     {
       query: z
         .string()
-        .describe("Required. The topic or question to look up in the OpenMail docs, e.g. `verify custom domain` or `inbox api key`. Ranked by keyword match."),
+        .describe("The topic or question to look up in the OpenMail docs, e.g. `verify custom domain` or `inbox api key`. Ranked by keyword match."),
     },
     async (args) => text(await searchDocs(String(args.query ?? ""))),
   );
@@ -380,7 +381,7 @@ export function createMcpServer(input: {
       type: z
         .enum(["bug", "friction", "feature_request"])
         .optional()
-        .describe("bug = a tool gave a wrong result; friction = it worked but was confusing or slow; feature_request = something missing. Default friction."),
+        .describe("Kind of report: a tool gave a wrong result (bug), worked but was confusing or slow (friction), or a capability is missing (feature_request). Omit to file it as friction."),
     },
     async (args) => {
       if (!api) return signIn();
@@ -565,7 +566,7 @@ export function createMcpServer(input: {
       triggers: "send an email, email this person",
     }),
     {
-      to: z.string().email().describe("Recipient address."),
+      to: z.string().email().describe("Who the new email is for."),
       subject: z.string().describe("Subject line of the new thread."),
       body: z.string().describe("Plain-text message body."),
       cc: CC_SCHEMA,
@@ -648,7 +649,7 @@ export function createMcpServer(input: {
         .number()
         .int()
         .optional()
-        .describe(`How many unread threads to check (max ${UNREAD_MAX}; larger values are capped). Default 10.`),
+        .describe(`How many unread threads to check. Values above ${UNREAD_MAX} are treated as ${UNREAD_MAX}. Omit to check 10.`),
     },
     async (args) => {
       if (!api) return signIn();
@@ -732,10 +733,10 @@ export function createMcpServer(input: {
       returns: "How many messages were scanned, then each match: subject, sender or recipient, time, thread id, message id, and a short body snippet.",
     }),
     {
-      query: z.string().describe("Required. Words to match; every word must appear (case-insensitive)."),
+      query: z.string().describe("Words to look for in the subject, body, sender, or recipient. A message matches only if it contains every word; case is ignored."),
       inbox_id: INBOX_ID,
-      direction: z.enum(["inbound", "outbound"]).optional().describe("Only received or only sent mail."),
-      limit: z.number().int().optional().describe(`Max results, 1–${SEARCH_MAX}. Default 10.`),
+      direction: z.enum(["inbound", "outbound"]).optional().describe("Restrict results to mail this inbox received (inbound) or sent (outbound). Omit to search both."),
+      limit: z.number().int().optional().describe(`How many matching messages to return. Values above ${SEARCH_MAX} are treated as ${SEARCH_MAX}. Omit for 10.`),
     },
     async (args) => {
       if (!api) return signIn();
@@ -809,7 +810,7 @@ export function createMcpServer(input: {
         ...(args.note ? [String(args.note), ""] : []),
         "---------- Forwarded message ----------",
         `From: ${msg.fromAddr}`,
-        ...(msg.createdAt ? [`Date: ${msg.createdAt}`] : []),
+        ...(msg.createdAt ? [`Date: ${formatTimestamp(msg.createdAt) || msg.createdAt}`] : []),
         `Subject: ${subject}`,
         ...(msg.toAddr ? [`To: ${msg.toAddr}`] : []),
         "",
@@ -910,7 +911,7 @@ export function createMcpServer(input: {
     }),
     {
       thread_id: THREAD_ID,
-      message_id: z.string().describe("Required. The `message:` id from read_thread."),
+      message_id: z.string().describe("The `message:` id from read_thread."),
     },
     async (args) => {
       if (!api) return signIn();
