@@ -1,7 +1,7 @@
 {
   "name": "@openmail/mcp",
   "version": "0.1.0",
-  "description": "Hosted MCP server for OpenMail — Gmail for agents",
+  "description": "Hosted MCP server for OpenMail \u2014 Gmail for agents",
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -24,7 +24,8 @@
     "build": "tsc",
     "start": "node dist/main.js",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:chatgpt": "scripts/build-chatgpt.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.24.3",
