@@ -618,7 +618,7 @@ describe("mailbox tools", () => {
     expect(result.isError).toBe(true);
     expect(result.text).toContain("Limit: 25 new recipients a day per inbox");
     expect(result.text).toContain("2026-10-13T00:00:00.000Z");
-    expect(result.text).toContain("reply_to_thread");
+    expect(result.text).toContain("Replies in an existing thread");
     expect(result.text).toContain("settings/billing");
   });
 
