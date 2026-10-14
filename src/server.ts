@@ -14,6 +14,7 @@ import {
   formatThread,
   formatThreads,
   formatSearch,
+  formatTimestamp,
 } from "./format.js";
 
 function text(markdown: string, isError = false) {
@@ -809,7 +810,7 @@ export function createMcpServer(input: {
         ...(args.note ? [String(args.note), ""] : []),
         "---------- Forwarded message ----------",
         `From: ${msg.fromAddr}`,
-        ...(msg.createdAt ? [`Date: ${msg.createdAt}`] : []),
+        ...(msg.createdAt ? [`Date: ${formatTimestamp(msg.createdAt) || msg.createdAt}`] : []),
         `Subject: ${subject}`,
         ...(msg.toAddr ? [`To: ${msg.toAddr}`] : []),
         "",

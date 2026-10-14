@@ -713,6 +713,22 @@ describe("search, forward, and delete", () => {
     expect(body.body).toContain("Where is my invoice?");
   });
 
+  it("forward_message prints the original date in a readable form", async () => {
+    api.state.threads["thread-a1"].messages.push({
+      id: "msg-dated",
+      direction: "inbound",
+      fromAddr: "human@example.com",
+      createdAt: "2026-10-14T21:21:29.238Z",
+      bodyText: "Dated message",
+    });
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    await call(client, "forward_message", { thread_id: "thread-a1", message_id: "msg-dated", to: "boss@example.com" });
+    const [sent] = api.calls("POST", /^\/v1\/inboxes\/inbox-a\/send$/);
+    const body = (sent.body as { body: string }).body;
+    expect(body).toContain("Date: 2026-10-14 21:21 UTC");
+    expect(body).not.toContain("21:21:29.238Z");
+  });
+
   it("forward_message refuses a message id that is not in the thread", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     const result = await call(client, "forward_message", { thread_id: "thread-a1", message_id: "msg-b1", to: "x@example.com" });
