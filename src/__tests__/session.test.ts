@@ -132,10 +132,10 @@ describe("assertLockedInbox", () => {
   it("rejects a thread from another inbox", () => {
     expect(() =>
       assertLockedInbox(base({ inboxId: "inbox-1" }), "inbox-2"),
-    ).toThrow(/cannot access that inbox/);
+    ).toThrow(/doesn't have access to that inbox/);
     expect(() =>
       assertLockedInbox(base({ apiKeyInboxId: "inbox-1" }), "inbox-2"),
-    ).toThrow(/cannot access that inbox/);
+    ).toThrow(/doesn't have access to that inbox/);
   });
 
   it("allows the locked inbox", () => {

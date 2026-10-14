@@ -344,7 +344,7 @@ describe("inbox lock", () => {
     const client = await connect("/mcp", INBOX_A_KEY);
     const result = await call(client, "read_thread", { thread_id: "thread-b1" });
     expect(result.isError).toBe(true);
-    expect(result.text).toMatch(/cannot access that inbox/i);
+    expect(result.text).toMatch(/doesn't have access to that inbox/i);
   });
 
   it("an inbox-scoped key cannot reply into another inbox's thread, and nothing is sent", async () => {
@@ -375,7 +375,7 @@ describe("inbox lock", () => {
       to: "x@example.com", subject: "s", body: "b", inbox_id: "inbox-b",
     });
     expect(result.isError).toBe(true);
-    expect(result.text).toMatch(/cannot access that inbox/i);
+    expect(result.text).toMatch(/doesn't have access to that inbox/i);
     expect(api.calls("POST", /\/send$/)).toHaveLength(0);
   });
 
@@ -383,7 +383,7 @@ describe("inbox lock", () => {
     const client = await connect("/mcp", INBOX_A_KEY);
     const result = await call(client, "get_inbox", { inbox_id: "inbox-b" });
     expect(result.isError).toBe(true);
-    expect(result.text).toMatch(/cannot access that inbox/i);
+    expect(result.text).toMatch(/doesn't have access to that inbox/i);
     expect(result.text).not.toContain("a@omail.sh");
     expect(api.calls("GET", /^\/v1\/inboxes\/inbox-/)).toHaveLength(0);
   });
@@ -592,11 +592,11 @@ describe("mailbox tools", () => {
     expect(api.calls("POST", /^\/v1\/inboxes$/)[0].body).toMatchObject({ podId: "pod-9" });
   });
 
-  it("create_inbox on an unknown domain says to call list_domains", async () => {
+  it("create_inbox on an unknown domain says only verified domains work", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     const result = await call(client, "create_inbox", { domain: "nope.example" });
     expect(result.isError).toBe(true);
-    expect(result.text).toContain("list_domains");
+    expect(result.text).toContain("only verified custom domains work");
   });
 
   it("list_domains prints ids, and get_domain and verify_domain accept the name", async () => {
@@ -617,7 +617,7 @@ describe("mailbox tools", () => {
     const result = await call(client, "send_email", { to: "x@example.com", subject: "Hi", body: "Hello", inbox_id: "inbox-a" });
     expect(result.isError).toBe(true);
     expect(result.text).toContain("Limit: 25 new recipients a day per inbox");
-    expect(result.text).toContain("2026-10-13T00:00:00.000Z");
+    expect(result.text).toContain("Resets 2026-10-13 00:00 UTC");
     expect(result.text).toContain("Replies in an existing thread");
     expect(result.text).toContain("settings/billing");
   });

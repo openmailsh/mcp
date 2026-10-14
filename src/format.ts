@@ -227,18 +227,18 @@ function errorHint(code: string, body: unknown): string | null {
     case "cold_outreach_limit": {
       const limit = typeof b.limit === "number" && b.limit > 0 ? `${b.limit} new recipients a day` : "a daily new-recipient limit";
       const scope = typeof b.scope === "string" ? ` per ${b.scope}` : "";
-      const until = typeof b.resetsAt === "string" ? b.resetsAt : "midnight UTC";
+      const until = typeof b.resetsAt === "string" ? formatTimestamp(b.resetsAt) || b.resetsAt : "midnight UTC";
       return [
         `Limit: ${limit}${scope}. Resets ${until}.`,
         "Only first contact to an address that never wrote this inbox counts. Replies in an existing thread and follow-ups to people already emailed still send now.",
-        "Hold the remaining new recipients until the reset; retrying before then fails the same way.",
+        "Wait until the reset for the remaining new recipients; trying sooner fails the same way.",
         "To raise the limit: upgrade the plan at https://console.openmail.sh/settings/billing, or ask support@openmail.sh for a review.",
       ].join("\n");
     }
     case "reputation_suspended":
-      return "Do not retry: every send from here fails until support lifts the suspension. Tell the user to contact support@openmail.sh. Reading mail still works.";
+      return "Sending is paused on this account until OpenMail support reviews it, so retrying will fail. Contact support@openmail.sh. Reading mail still works.";
     case "invalid_domain":
-      return "Call list_domains: only domains shown as verified work, and a domain scoped to a pod needs that pod_id. Omit domain to use omail.sh.";
+      return "That domain can't be used yet: only verified custom domains work. Check the domain list for its status, or leave the domain out to use an omail.sh address.";
     default:
       return null;
   }
@@ -250,7 +250,9 @@ export function formatApiError(err: {
   message: string;
   body?: unknown;
 }): string {
-  const line = `OpenMail API ${err.status} (${err.code}): ${err.message}`;
+  // Lead with what happened; keep the status and code for support at the end.
+  const message = err.message.trim().replace(/[.!]?$/, ".");
+  const line = `${message} (OpenMail error ${err.status}, ${err.code})`;
   const hint = errorHint(err.code, err.body);
   return hint ? `${line}\n${hint}` : line;
 }

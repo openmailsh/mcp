@@ -154,6 +154,6 @@ export function assertLockedInbox(
   const locked = lockedInboxId(ctx);
   if (!locked) return;
   if (inboxId !== locked) {
-    throw new Error("This credential cannot access that inbox.");
+    throw new Error("Your credential doesn't have access to that inbox.");
   }
 }

@@ -56,7 +56,7 @@ export function createOpenMailApi(
       throw new ApiError(
         res.status,
         typeof json.error === "string" ? json.error : "api_error",
-        json.message || json.error || `OpenMail API ${res.status}`,
+        json.message || json.error || "OpenMail request failed",
         json,
       );
     }

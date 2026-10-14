@@ -92,7 +92,7 @@ async function resolveDomainId(api: OpenMailApi, ref: string): Promise<string> {
   if (!ref.includes(".")) return ref;
   const wanted = ref.trim().toLowerCase();
   const match = (await listDomains(api)).find((d) => d.domain.toLowerCase() === wanted);
-  if (!match) throw new Error(`No domain named ${ref} on this account. Call list_domains, or add_domain to add it.`);
+  if (!match) throw new Error(`There's no domain called ${ref} on this account. Check the domain list, or add it first.`);
   return match.id;
 }
 
@@ -135,8 +135,11 @@ function keyViaConsole(inbox: { address?: string | null }): string {
 
 function fail(err: unknown) {
   if (err instanceof ApiError) return text(formatApiError(err), true);
-  return text(err instanceof Error ? err.message : "Unexpected error", true);
+  return text(err instanceof Error ? err.message : "Something went wrong. Try again in a moment.", true);
 }
+
+const SIGN_IN = "You're not signed in to OpenMail. Connect your OpenMail account (or add an API key) and try again.";
+const signIn = () => text(SIGN_IN, true);
 
 function toolDesc(parts: {
   purpose: string;
@@ -197,12 +200,12 @@ async function resolveInbox(
     return { id: locked, defaulted: false };
   }
   if (requested) return { id: requested, defaulted: false };
-  if (!api) throw new Error("Sign in to OpenMail first.");
+  if (!api) throw new Error(SIGN_IN);
   const listed = (await api.get("/v1/inboxes?limit=1")) as {
     data?: Array<{ id: string; address?: string | null }>;
   };
   const first = listed.data?.[0];
-  if (!first?.id) throw new Error("No inbox yet. Call setup_agent_email or create_inbox.");
+  if (!first?.id) throw new Error("This account has no inbox yet. Create one first, then try again.");
   return { id: first.id, address: first.address, defaulted: true };
 }
 
@@ -358,7 +361,7 @@ export function createMcpServer(input: {
     }),
     {},
     async () => {
-      if (!me) return text("Not signed in. Send a Bearer om_ key or complete OAuth.", true);
+      if (!me) return signIn();
       return text(formatMe({ ...me, inboxId: ctx.inboxId || ctx.apiKeyInboxId }));
     },
   );
@@ -380,7 +383,7 @@ export function createMcpServer(input: {
         .describe("bug = a tool gave a wrong result; friction = it worked but was confusing or slow; feature_request = something missing. Default friction."),
     },
     async (args) => {
-      if (!api) return text("Sign in to send feedback.", true);
+      if (!api) return signIn();
       await api.post("/v1/feedback", {
         type: args.type || "friction",
         message: args.message,
@@ -410,7 +413,7 @@ export function createMcpServer(input: {
       mintKey: z.boolean().optional().describe("Mint an inbox-scoped key. Default true when execute is true."),
     },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       if (!args.execute) {
         const mailbox = args.mailboxName ? String(args.mailboxName) : "(auto-generated)";
         const domain = args.domain ? String(args.domain) : "omail.sh";
@@ -468,7 +471,7 @@ export function createMcpServer(input: {
     }),
     {},
     async () => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const listed = (await api.get("/v1/inboxes?limit=50")) as {
         data: Array<{ id: string; address: string; displayName?: string | null }>;
       };
@@ -487,7 +490,7 @@ export function createMcpServer(input: {
     }),
     { inbox_id: INBOX_ID },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const id = await resolveInboxId(ctx, api, args.inbox_id as string | undefined);
       const inbox = (await api.get(`/v1/inboxes/${id}`)) as {
         id: string;
@@ -514,7 +517,7 @@ export function createMcpServer(input: {
       pod_id: POD_ID,
     },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const podId = await podForDomain(api, args.domain, args.pod_id);
       const inbox = (await api.post("/v1/inboxes", {
         mailboxName: args.mailboxName,
@@ -540,13 +543,13 @@ export function createMcpServer(input: {
       name: z.string().optional().describe("Label for the key so you can recognise it in the console later. Default `mcp`."),
     },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const inbox = await resolveInbox(ctx, api, args.inbox_id as string | undefined);
       if (ctx.authKind === "oauth") return text(keyViaConsole(inbox));
       const key = (await api.post(`/v1/inboxes/${inbox.id}/api-keys`, {
         name: args.name || "mcp",
       })) as { token?: string; last4?: string };
-      if (!key.token) return text("Key created but token was not returned.");
+      if (!key.token) return text("The key was created, but OpenMail didn't return it. Create a new one in the console: " + consoleOrigin() + "/settings");
       return text(
         `Inbox-scoped key (shown once): \`${key.token}\`\nStore it in the agent's env (OPENMAIL_API_KEY); do not paste it into replies or docs.`,
       );
@@ -573,7 +576,7 @@ export function createMcpServer(input: {
         .describe("Inbox to send from. Omit only when the account has one inbox; otherwise call list_inboxes and pass the right id."),
     },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const inbox = await resolveInbox(ctx, api, args.inbox_id as string | undefined);
       const sent = (await api.post(`/v1/inboxes/${inbox.id}/send`, {
         to: args.to,
@@ -611,7 +614,7 @@ export function createMcpServer(input: {
         .describe("Not needed: the reply always goes out from the thread's own inbox."),
     },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const thread = await loadThread(ctx, api, String(args.thread_id));
       const messages = [...(thread.data ?? [])].reverse();
       // A follow-up on a thread the agent started has no inbound yet: reply
@@ -619,7 +622,7 @@ export function createMcpServer(input: {
       const to =
         messages.find((m) => m.direction === "inbound")?.fromAddr ??
         messages.find((m) => m.direction === "outbound" && m.toAddr)?.toAddr;
-      if (!to) return text("This thread has no recipient to reply to. Use send_email to start a new thread.", true);
+      if (!to) return text("There's no one to reply to in this thread yet. Start a new email instead.", true);
       await api.post(`/v1/inboxes/${thread.inboxId}/send`, {
         to,
         body: args.body,
@@ -648,7 +651,7 @@ export function createMcpServer(input: {
         .describe(`How many unread threads to check (max ${UNREAD_MAX}; larger values are capped). Default 10.`),
     },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const inbox = await resolveInbox(ctx, api, args.inbox_id as string | undefined);
       const id = inbox.id;
       // Clamp instead of rejecting: agents ask for 50 or 100, and a schema
@@ -690,7 +693,7 @@ export function createMcpServer(input: {
     }),
     { thread_id: THREAD_ID },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const full = await loadThread(ctx, api, String(args.thread_id));
       return text(
         formatThread({
@@ -712,7 +715,7 @@ export function createMcpServer(input: {
     }),
     { thread_id: THREAD_ID },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       await loadThread(ctx, api, String(args.thread_id));
       await api.patch(`/v1/threads/${args.thread_id}`, { isRead: true });
       return text(`Marked ${args.thread_id} read.`);
@@ -735,9 +738,9 @@ export function createMcpServer(input: {
       limit: z.number().int().optional().describe(`Max results, 1–${SEARCH_MAX}. Default 10.`),
     },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const words = String(args.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-      if (words.length === 0) return text("Pass a query, e.g. `invoice acme`.", true);
+      if (words.length === 0) return text("Enter some words to search for, e.g. `invoice acme`.", true);
       const inbox = await resolveInbox(ctx, api, args.inbox_id as string | undefined);
       const max = Math.min(SEARCH_MAX, Math.max(1, Number(args.limit ?? 10) || 10));
       const hits: SearchHit[] = [];
@@ -786,7 +789,7 @@ export function createMcpServer(input: {
       bcc: BCC_SCHEMA,
     },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const thread = await loadThread(ctx, api, String(args.thread_id));
       const messages = thread.data ?? [];
       const msg = args.message_id
@@ -795,8 +798,8 @@ export function createMcpServer(input: {
       if (!msg) {
         return text(
           args.message_id
-            ? `Message ${args.message_id} is not in thread ${args.thread_id}. Call read_thread for its message ids.`
-            : `Thread ${args.thread_id} has no messages to forward.`,
+            ? `That message isn't in this thread. Open the thread to see its messages.`
+            : "This thread has no messages to forward.",
           true,
         );
       }
@@ -852,13 +855,13 @@ export function createMcpServer(input: {
         .describe("always (default); needs_human = only mail the agent should not auto-handle; webhook_failed = only when webhook delivery failed."),
     },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const patch: Record<string, unknown> = {};
       if (args.display_name !== undefined) patch.displayName = args.display_name;
       if (args.forward_to !== undefined) patch.forwardTo = args.forward_to;
       if (args.forward_when !== undefined) patch.forwardWhen = args.forward_when;
       if (Object.keys(patch).length === 0) {
-        return text("Nothing to change. Pass display_name, forward_to, or forward_when.", true);
+        return text("Nothing to change. Give a new display name or forwarding setting.", true);
       }
       const id = await resolveInboxId(ctx, api, args.inbox_id as string | undefined);
       const inbox = (await api.patch(`/v1/inboxes/${id}`, patch)) as {
@@ -889,7 +892,7 @@ export function createMcpServer(input: {
     }),
     { thread_id: THREAD_ID },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       await loadThread(ctx, api, String(args.thread_id));
       await api.delete(`/v1/threads/${args.thread_id}`);
       return text(`Moved thread ${args.thread_id} to Trash (restorable in the console for 30 days).`);
@@ -910,12 +913,12 @@ export function createMcpServer(input: {
       message_id: z.string().describe("Required. The `message:` id from read_thread."),
     },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       // Load through the thread so an inbox-locked session cannot reach
       // a message in another inbox by id.
       const thread = await loadThread(ctx, api, String(args.thread_id));
       if (!thread.data?.some((m) => m.id === args.message_id)) {
-        return text(`Message ${args.message_id} is not in thread ${args.thread_id}. Call read_thread for its message ids.`, true);
+        return text(`That message isn't in this thread. Open the thread to see its messages.`, true);
       }
       await api.delete(`/v1/messages/${args.message_id}`);
       return text(`Deleted message ${args.message_id}.`);
@@ -936,7 +939,7 @@ export function createMcpServer(input: {
       filename: z.string().describe("Attachment filename exactly as listed after `attachments:` in read_thread."),
     },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const extracted = (await api.get(
         `/v1/attachments/${args.message_id}/${encodeURIComponent(String(args.filename))}/text`,
       )) as { text?: string; filename?: string; inboxId?: string };
@@ -956,7 +959,7 @@ export function createMcpServer(input: {
     }),
     {},
     async () => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const rows = await listDomains(api);
       if (rows.length === 0) return text("No custom domains.");
       return text(
@@ -978,7 +981,7 @@ export function createMcpServer(input: {
     }),
     { domain_id: DOMAIN_REF },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const domain = (await api.get(`/v1/domains/${await resolveDomainId(api, String(args.domain_id))}`)) as {
         domain: string;
         status: string;
@@ -1010,7 +1013,7 @@ export function createMcpServer(input: {
         .describe("Domain or subdomain to send and receive mail on, e.g. mail.acme.com. The user must be able to edit its DNS."),
     },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const domain = (await api.post("/v1/domains", { domain: args.domain })) as {
         id?: string;
         domain: string;
@@ -1040,7 +1043,7 @@ export function createMcpServer(input: {
     }),
     { domain_id: DOMAIN_REF },
     async (args) => {
-      if (!api) return text("Sign in first.", true);
+      if (!api) return signIn();
       const domain = (await api.post(`/v1/domains/${await resolveDomainId(api, String(args.domain_id))}/verify`)) as {
         domain: string;
         status: string;
