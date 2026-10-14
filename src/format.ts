@@ -230,7 +230,7 @@ function errorHint(code: string, body: unknown): string | null {
       const until = typeof b.resetsAt === "string" ? b.resetsAt : "midnight UTC";
       return [
         `Limit: ${limit}${scope}. Resets ${until}.`,
-        "Only first contact to an address that never wrote this inbox counts. Replies (reply_to_thread) and follow-ups to people already emailed still send now.",
+        "Only first contact to an address that never wrote this inbox counts. Replies in an existing thread and follow-ups to people already emailed still send now.",
         "Hold the remaining new recipients until the reset; retrying before then fails the same way.",
         "To raise the limit: upgrade the plan at https://console.openmail.sh/settings/billing, or ask support@openmail.sh for a review.",
       ].join("\n");
