@@ -60,6 +60,22 @@ const POD_ID = z
   .string()
   .optional()
   .describe("Pod to create the inbox in. Needed when the custom domain is scoped to a pod; list_domains shows it.");
+const MAILBOX_NAME = z
+  .string()
+  .optional()
+  .describe("Local part of the new address (the `support` in support@omail.sh). Omit to auto-generate one.");
+const DISPLAY_NAME = z
+  .string()
+  .optional()
+  .describe("Sender name recipients see next to the address, e.g. `Acme Support`.");
+const INBOX_DOMAIN = z
+  .string()
+  .optional()
+  .describe("omail.sh (default) or a verified custom domain from list_domains.");
+const INBOX_ID = z
+  .string()
+  .optional()
+  .describe("Inbox id from list_inboxes. Omit to use the session's locked inbox, or else the account's first inbox.");
 
 type DomainRow = { id: string; domain: string; status: string; podId?: string | null };
 
@@ -127,9 +143,12 @@ function toolDesc(parts: {
   notFor: string;
   when: string;
   triggers: string;
+  /** What the markdown result contains, so the agent knows it answers the request. */
+  returns?: string;
 }): string {
   return [
     `Purpose: ${parts.purpose}`,
+    ...(parts.returns ? [`Returns: ${parts.returns}`] : []),
     `NOT for: ${parts.notFor}`,
     `When to use: ${parts.when}`,
     `Trigger phrases: ${parts.triggers}`,
@@ -198,40 +217,60 @@ async function resolveInboxId(
 /**
  * Hints clients use to decide how much to ask the user before running a tool.
  * Without them ChatGPT and Claude treat every tool as a destructive write and
- * prompt on each call — including reads. Defaults (when a tool is omitted)
- * are the spec's: readOnly false, destructive true, idempotent false, open
- * world true.
+ * prompt on each call — including reads. Every hint is set explicitly so no
+ * client falls back to the spec defaults (destructive, open world).
  */
+const hints = (
+  title: string,
+  readOnlyHint: boolean,
+  destructiveHint: boolean,
+  idempotentHint: boolean,
+  openWorldHint: boolean,
+): ToolAnnotations => ({ title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint });
+/** GETs against the OpenMail API (or its docs): no state change, safe to repeat. */
+const read = (title: string) => hints(title, true, false, true, false);
+
 const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
-  search_docs: { title: "Search OpenMail docs", readOnlyHint: true, openWorldHint: false },
-  get_docs: { title: "Fetch a docs page", readOnlyHint: true, openWorldHint: false },
-  auth_me: { title: "Who am I", readOnlyHint: true, openWorldHint: false },
-  send_mcp_feedback: { title: "Send feedback to OpenMail", destructiveHint: false, openWorldHint: false },
-  list_inboxes: { title: "List inboxes", readOnlyHint: true, openWorldHint: false },
-  get_inbox: { title: "Show inbox", readOnlyHint: true, openWorldHint: false },
-  list_unread_threads: { title: "List unread threads", readOnlyHint: true, openWorldHint: false },
-  read_thread: { title: "Read thread", readOnlyHint: true, openWorldHint: false },
-  get_attachment_text: { title: "Read attachment", readOnlyHint: true, openWorldHint: false },
-  list_domains: { title: "List domains", readOnlyHint: true, openWorldHint: false },
-  get_domain: { title: "Show domain DNS", readOnlyHint: true, openWorldHint: false },
+  search_docs: read("Search OpenMail docs"),
+  get_docs: read("Fetch a docs page"),
+  auth_me: read("Who am I"),
+  list_inboxes: read("List inboxes"),
+  get_inbox: read("Show inbox"),
+  list_unread_threads: read("List unread threads"),
+  read_thread: read("Read thread"),
+  get_attachment_text: read("Read attachment"),
+  list_domains: read("List domains"),
+  get_domain: read("Show domain DNS"),
+  search_mail: read("Search mail"),
   // Creates something new; running it twice creates two. Not destructive.
-  setup_agent_email: { title: "Set up agent inbox", destructiveHint: false, openWorldHint: false },
-  create_inbox: { title: "Create inbox", destructiveHint: false, openWorldHint: false },
-  mint_inbox_key: { title: "Mint inbox API key", destructiveHint: false, openWorldHint: false },
-  add_domain: { title: "Add custom domain", destructiveHint: false, openWorldHint: false },
-  verify_domain: { title: "Verify domain DNS", destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  mark_thread_read: { title: "Mark thread read", destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  search_mail: { title: "Search mail", readOnlyHint: true, openWorldHint: false },
+  send_mcp_feedback: hints("Send feedback to OpenMail", false, false, false, false),
+  setup_agent_email: hints("Set up agent inbox", false, false, false, false),
+  create_inbox: hints("Create inbox", false, false, false, false),
+  mint_inbox_key: hints("Mint inbox API key", false, false, false, false),
+  add_domain: hints("Add custom domain", false, false, false, false),
+  // Updates stored status / read flag; repeating converges on the same state.
+  verify_domain: hints("Verify domain DNS", false, false, true, false),
+  mark_thread_read: hints("Mark thread read", false, false, true, false),
   // Changes where inbound mail is copied: not destructive, but reaches outside.
-  update_inbox: { title: "Update inbox settings", destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  update_inbox: hints("Update inbox settings", false, false, true, true),
   // Thread delete moves to Trash (restorable 30 days); message delete does not.
-  delete_thread: { title: "Delete thread", destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  delete_message: { title: "Delete message", destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  forward_message: { title: "Forward message", destructiveHint: true, openWorldHint: true },
+  delete_thread: hints("Delete thread", false, true, true, false),
+  delete_message: hints("Delete message", false, true, true, false),
   // Mail leaves the system and cannot be recalled: destructive + open world.
-  send_email: { title: "Send email", destructiveHint: true, openWorldHint: true },
-  reply_to_thread: { title: "Reply to thread", destructiveHint: true, openWorldHint: true },
+  forward_message: hints("Forward message", false, true, false, true),
+  send_email: hints("Send email", false, true, false, true),
+  reply_to_thread: hints("Reply to thread", false, true, false, true),
 };
+
+/** Sent in `initialize`: how an agent should drive this server. */
+export const SERVER_INSTRUCTIONS = [
+  "OpenMail gives the agent its own email inboxes.",
+  "Start with auth_me to see which credential and inbox you have. No inbox yet: setup_agent_email (plan first, then execute=true).",
+  "Mailbox loop: list_unread_threads → read_thread → reply_to_thread → mark_thread_read. Only reply to messages marked autoReplyable: yes.",
+  "Use reply_to_thread for replies and send_email only for new conversations. Pass inbox_id when the account has more than one inbox (list_inboxes).",
+  "Never invent From addresses or paste API keys into chat. Custom domains: add_domain → user publishes DNS → verify_domain.",
+  "Unsure how something works: search_docs, then get_docs.",
+].join("\n");
 
 export function createMcpServer(input: {
   ctx: SessionContext;
@@ -240,12 +279,18 @@ export function createMcpServer(input: {
 }): McpServer {
   const { ctx, api, me } = input;
   const allowed = new Set(visibleTools(ctx));
-  const server = new McpServer({
-    name: "openmail",
-    version: "0.1.0",
-    description:
-      "OpenMail is Gmail for agents. Read autoReplyable mail (people and other agents; not spam, bulk, or bounces) and reply in-thread. Do not invent From addresses. Hosted URL: https://mcp.openmail.sh/mcp (sign in required; docs only at /mcp/public)",
-  });
+  const server = new McpServer(
+    {
+      name: "openmail",
+      title: "OpenMail",
+      version: "0.1.0",
+      description:
+        "OpenMail is Gmail for agents. Read autoReplyable mail (people and other agents; not spam, bulk, or bounces) and reply in-thread. Do not invent From addresses. Hosted URL: https://mcp.openmail.sh/mcp (sign in required; docs only at /mcp/public)",
+      websiteUrl: "https://openmail.sh",
+      icons: [{ src: "https://openmail.sh/apple-touch-icon.png", mimeType: "image/png", sizes: ["180x180"] }],
+    },
+    { instructions: SERVER_INSTRUCTIONS },
+  );
 
   const add = (
     name: ToolName,
@@ -274,8 +319,13 @@ export function createMcpServer(input: {
       notFor: "Reading a customer's mail or sending email.",
       when: "Before calling mailbox tools, or when unsure of an API field.",
       triggers: "how does openmail work, mcp setup, send email docs",
+      returns: "Up to 5 matching docs sections, each with its title, source URL, and an excerpt.",
     }),
-    { query: z.string().describe("Required. What you need to know, in a few words.") },
+    {
+      query: z
+        .string()
+        .describe("Required. The topic or question to look up in the OpenMail docs, e.g. `verify custom domain` or `inbox api key`. Ranked by keyword match."),
+    },
     async (args) => text(await searchDocs(String(args.query ?? ""))),
   );
 
@@ -286,12 +336,13 @@ export function createMcpServer(input: {
       notFor: "Arbitrary web browsing.",
       when: "You have a docs.openmail.sh or openmail.sh URL from search_docs.",
       triggers: "open the quickstart, fetch llms.txt",
+      returns: "The page text (markdown when available), cut off after 20,000 characters.",
     }),
     {
       url: z
         .string()
         .optional()
-        .describe("https://openmail.sh/... or https://docs.openmail.sh/..."),
+        .describe("Page to fetch, usually a Source URL from search_docs. Only openmail.sh and docs.openmail.sh pages work. Omit for the OpenMail llms.txt overview."),
     },
     async (args) => text(await getDocs(String(args.url ?? ""))),
   );
@@ -303,6 +354,7 @@ export function createMcpServer(input: {
       notFor: "Listing other customers or switching orgs.",
       when: "First authenticated call, or after a 403.",
       triggers: "who am I, what can I access",
+      returns: "Customer id, plan, API key scope, OAuth scopes (if any), and the locked inbox id when the credential is limited to one inbox.",
     }),
     {},
     async () => {
@@ -318,10 +370,14 @@ export function createMcpServer(input: {
       notFor: "Emailing a third party.",
       when: "A tool was confusing, wrong, or blocked you incorrectly.",
       triggers: "this tool is wrong, report friction",
+      returns: "A short confirmation that the feedback was recorded.",
     }),
     {
       message: z.string().describe("What went wrong or what you needed"),
-      type: z.enum(["bug", "friction", "feature_request"]).optional(),
+      type: z
+        .enum(["bug", "friction", "feature_request"])
+        .optional()
+        .describe("bug = a tool gave a wrong result; friction = it worked but was confusing or slow; feature_request = something missing. Default friction."),
     },
     async (args) => {
       if (!api) return text("Sign in to send feedback.", true);
@@ -346,10 +402,10 @@ export function createMcpServer(input: {
       execute: z
         .boolean()
         .optional()
-        .describe("If true, create the inbox (and mint a key). Default false = plan only."),
-      mailboxName: z.string().optional(),
-      displayName: z.string().optional(),
-      domain: z.string().optional(),
+        .describe("Omit or false to only preview the plan. true creates the inbox (and mints a key)."),
+      mailboxName: MAILBOX_NAME,
+      displayName: DISPLAY_NAME,
+      domain: INBOX_DOMAIN,
       pod_id: POD_ID,
       mintKey: z.boolean().optional().describe("Mint an inbox-scoped key. Default true when execute is true."),
     },
@@ -408,6 +464,7 @@ export function createMcpServer(input: {
       notFor: "Reading thread contents.",
       when: "You need an inbox id or address.",
       triggers: "what inboxes do I have",
+      returns: "Each inbox's address, display name, and id. Up to 50 inboxes.",
     }),
     {},
     async () => {
@@ -426,8 +483,9 @@ export function createMcpServer(input: {
       notFor: "Reading mail.",
       when: "You already have an inbox id.",
       triggers: "show this inbox",
+      returns: "The inbox's address, display name, and id.",
     }),
-    { inbox_id: z.string().optional() },
+    { inbox_id: INBOX_ID },
     async (args) => {
       if (!api) return text("Sign in first.", true);
       const id = await resolveInboxId(ctx, api, args.inbox_id as string | undefined);
@@ -447,14 +505,12 @@ export function createMcpServer(input: {
       notFor: "Sending mail or adding DNS.",
       when: "setup_agent_email execute, or you need another address.",
       triggers: "create an inbox, new email address",
+      returns: "The new inbox's address, display name, and id.",
     }),
     {
-      mailboxName: z.string().optional(),
-      displayName: z.string().optional(),
-      domain: z
-        .string()
-        .optional()
-        .describe("omail.sh (default) or a verified custom domain from list_domains."),
+      mailboxName: MAILBOX_NAME,
+      displayName: DISPLAY_NAME,
+      domain: INBOX_DOMAIN,
       pod_id: POD_ID,
     },
     async (args) => {
@@ -480,8 +536,8 @@ export function createMcpServer(input: {
       triggers: "mint a scoped key, inbox api key",
     }),
     {
-      inbox_id: z.string().optional(),
-      name: z.string().optional(),
+      inbox_id: INBOX_ID,
+      name: z.string().optional().describe("Label for the key so you can recognise it in the console later. Default `mcp`."),
     },
     async (args) => {
       if (!api) return text("Sign in first.", true);
@@ -506,9 +562,9 @@ export function createMcpServer(input: {
       triggers: "send an email, email this person",
     }),
     {
-      to: z.string().email(),
-      subject: z.string(),
-      body: z.string(),
+      to: z.string().email().describe("Recipient address."),
+      subject: z.string().describe("Subject line of the new thread."),
+      body: z.string().describe("Plain-text message body."),
       cc: CC_SCHEMA,
       bcc: BCC_SCHEMA,
       inbox_id: z
@@ -546,10 +602,13 @@ export function createMcpServer(input: {
     }),
     {
       thread_id: THREAD_ID,
-      body: z.string(),
+      body: z.string().describe("Plain-text reply. It goes to the latest inbound sender (or, with none, the last outbound recipient)."),
       cc: CC_SCHEMA,
       bcc: BCC_SCHEMA,
-      inbox_id: z.string().optional(),
+      inbox_id: z
+        .string()
+        .optional()
+        .describe("Not needed: the reply always goes out from the thread's own inbox."),
     },
     async (args) => {
       if (!api) return text("Sign in first.", true);
@@ -578,14 +637,15 @@ export function createMcpServer(input: {
       notFor: "Spam, marketing, or bounces — those are filtered out.",
       when: "The mailbox loop: what needs a reply.",
       triggers: "unread mail, anything that needs a reply",
+      returns: "Each thread's subject, latest inbound sender, and thread id, or a note that nothing needs a reply.",
     }),
     {
-      inbox_id: z.string().optional(),
+      inbox_id: INBOX_ID,
       limit: z
         .number()
         .int()
         .optional()
-        .describe(`How many threads to check, 1–${UNREAD_MAX}. Larger values are capped at ${UNREAD_MAX}. Default 10.`),
+        .describe(`How many unread threads to check (max ${UNREAD_MAX}; larger values are capped). Default 10.`),
     },
     async (args) => {
       if (!api) return text("Sign in first.", true);
@@ -626,6 +686,7 @@ export function createMcpServer(input: {
       notFor: "Finding a thread you do not have the id of (use search_mail).",
       when: "Before replying.",
       triggers: "read this thread, show the conversation",
+      returns: "Subject, thread id, then each message: direction, sender, time, message id, category, autoReplyable flag, body (quoted history stripped), and attachment names.",
     }),
     { thread_id: THREAD_ID },
     async (args) => {
@@ -665,10 +726,11 @@ export function createMcpServer(input: {
       notFor: "Searching the docs (use search_docs).",
       when: "You need an older thread or message and do not have its id.",
       triggers: "find the email from, search my mail, where is the invoice",
+      returns: "How many messages were scanned, then each match: subject, sender or recipient, time, thread id, message id, and a short body snippet.",
     }),
     {
       query: z.string().describe("Required. Words to match; every word must appear (case-insensitive)."),
-      inbox_id: z.string().optional(),
+      inbox_id: INBOX_ID,
       direction: z.enum(["inbound", "outbound"]).optional().describe("Only received or only sent mail."),
       limit: z.number().int().optional().describe(`Max results, 1–${SEARCH_MAX}. Default 10.`),
     },
@@ -710,6 +772,7 @@ export function createMcpServer(input: {
       notFor: "Replying to the sender (use reply_to_thread). Not for forwarding all future mail (use update_inbox).",
       when: "Someone else needs to see a message you received.",
       triggers: "forward this email, send this to my colleague",
+      returns: "Which message was forwarded and to whom, the new thread id, and any attachments that were not included.",
     }),
     {
       thread_id: THREAD_ID,
@@ -717,7 +780,7 @@ export function createMcpServer(input: {
         .string()
         .optional()
         .describe("The `message:` id from read_thread. Omit to forward the latest inbound message."),
-      to: z.string().email(),
+      to: z.string().email().describe("Address to forward the message to."),
       note: z.string().optional().describe("Text above the forwarded message."),
       cc: CC_SCHEMA,
       bcc: BCC_SCHEMA,
@@ -768,10 +831,15 @@ export function createMcpServer(input: {
       notFor: "Forwarding one message (use forward_message).",
       when: "The user wants inbound mail copied to their own address, or forwarding stopped.",
       triggers: "forward all mail to my gmail, stop forwarding, rename inbox",
+      returns: "The inbox's address, display name, and id, plus forwarding target, mode, and confirmation status (or off).",
     }),
     {
-      inbox_id: z.string().optional(),
-      display_name: z.string().nullable().optional(),
+      inbox_id: INBOX_ID,
+      display_name: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("New sender name recipients see. null clears it; omit to leave it unchanged."),
       forward_to: z
         .string()
         .email()
@@ -817,6 +885,7 @@ export function createMcpServer(input: {
       notFor: "Marking handled mail (use mark_thread_read).",
       when: "The user asks to delete a conversation.",
       triggers: "delete this thread, trash this conversation",
+      returns: "Confirmation that the thread was moved to Trash.",
     }),
     { thread_id: THREAD_ID },
     async (args) => {
@@ -834,6 +903,7 @@ export function createMcpServer(input: {
       notFor: "Deleting a whole conversation (use delete_thread, which can be undone).",
       when: "The user asks to remove one specific message.",
       triggers: "delete this message",
+      returns: "Confirmation that the message was deleted.",
     }),
     {
       thread_id: THREAD_ID,
@@ -859,10 +929,11 @@ export function createMcpServer(input: {
       notFor: "Downloading raw bytes.",
       when: "read_thread listed an attachment; use the `message:` id printed under it, not the thread id.",
       triggers: "read the pdf, extract the invoice",
+      returns: "The attachment's extracted text under its filename.",
     }),
     {
       message_id: z.string().describe("The `message:` id shown under the attachment in read_thread"),
-      filename: z.string(),
+      filename: z.string().describe("Attachment filename exactly as listed after `attachments:` in read_thread."),
     },
     async (args) => {
       if (!api) return text("Sign in first.", true);
@@ -881,6 +952,7 @@ export function createMcpServer(input: {
       notFor: "Platform omail.sh addresses.",
       when: "Checking whether DNS is green.",
       triggers: "list domains, is my domain verified",
+      returns: "Each custom domain's name, verify status, id, and pod id (if scoped). Up to 50 domains.",
     }),
     {},
     async () => {
@@ -902,6 +974,7 @@ export function createMcpServer(input: {
       notFor: "Editing DNS at the registrar.",
       when: "You have a domain id from list_domains or add_domain.",
       triggers: "show dns records",
+      returns: "Domain name, verify status, and each DNS record (type, name, value, priority, purpose, per-record status).",
     }),
     { domain_id: DOMAIN_REF },
     async (args) => {
@@ -929,8 +1002,13 @@ export function createMcpServer(input: {
       notFor: "Creating an inbox (do that after verify).",
       when: "The agent needs a branded address.",
       triggers: "add my domain, set up mail.example.com",
+      returns: "Domain name, status, the DNS records to publish at the registrar, and the new domain id.",
     }),
-    { domain: z.string() },
+    {
+      domain: z
+        .string()
+        .describe("Domain or subdomain to send and receive mail on, e.g. mail.acme.com. The user must be able to edit its DNS."),
+    },
     async (args) => {
       if (!api) return text("Sign in first.", true);
       const domain = (await api.post("/v1/domains", { domain: args.domain })) as {
@@ -958,6 +1036,7 @@ export function createMcpServer(input: {
       notFor: "Guessing records — call get_domain if you need them again.",
       when: "The user says DNS is saved.",
       triggers: "verify domain, check dns",
+      returns: "Domain name, updated verify status, and each DNS record with its own status.",
     }),
     { domain_id: DOMAIN_REF },
     async (args) => {

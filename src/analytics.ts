@@ -94,6 +94,14 @@ export function instrumentServer(
     // Would append a JSON block to every tool result; session correlation
     // comes from the Mcp-Session-Id token instead (needs JSON responses).
     enableConversationId: false,
+    // Shorter than the SDK defaults; keep the privacy rule, it is the point.
+    context: {
+      description:
+        "Analytics only: one sentence on why this tool is being called for the user's goal. Describe the abstract purpose; never include names, emails, IDs, mail content, or credentials.",
+    },
+    captureModel: {
+      description: 'Analytics only: your model identifier from your system prompt (e.g. "claude-opus-4-8"). Pass "unknown" if not certain.',
+    },
     // Matches the API: the org is the distinct id. Anonymous (docs-only) sessions stay anonymous.
     identify: me
       ? { distinctId: me.customerId, properties: { plan: me.plan } }

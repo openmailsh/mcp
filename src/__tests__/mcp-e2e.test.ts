@@ -519,6 +519,30 @@ describe("mailbox tools", () => {
     expect(byName.create_inbox).toMatchObject({ destructiveHint: false });
     expect(byName.send_email).toMatchObject({ destructiveHint: true, openWorldHint: true });
     for (const tool of tools) expect(tool.annotations?.title, tool.name).toBeTruthy();
+    for (const tool of tools) {
+      for (const hint of ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"] as const) {
+        expect(typeof tool.annotations?.[hint], `${tool.name}.${hint}`).toBe("boolean");
+      }
+    }
+  });
+
+  it("every tool input carries a description", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const { tools } = await client.listTools();
+    for (const tool of tools) {
+      const props = (tool.inputSchema.properties ?? {}) as Record<string, { description?: string }>;
+      for (const [key, schema] of Object.entries(props)) {
+        expect(schema.description, `${tool.name}.${key}`).toBeTruthy();
+      }
+    }
+  });
+
+  it("initialize advertises title, website, icon, and instructions", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const info = client.getServerVersion();
+    expect(info).toMatchObject({ name: "openmail", title: "OpenMail", websiteUrl: "https://openmail.sh" });
+    expect(info?.icons?.[0]).toMatchObject({ src: expect.stringMatching(/^https:\/\//), sizes: ["180x180"] });
+    expect(client.getInstructions()).toContain("list_unread_threads");
   });
 
   it("setup_agent_email plan echoes the requested mailbox, domain, and display name", async () => {
