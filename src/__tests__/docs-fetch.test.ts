@@ -116,7 +116,7 @@ describe("searchDocs corpus fetching", () => {
       vi.fn(async () => new Response("nope", { status: 503 })),
     );
     const out = await searchDocs("reply");
-    expect(out).toContain("Could not fetch docs");
+    expect(out).toContain("Couldn't load the OpenMail docs");
   });
 });
 
@@ -157,7 +157,7 @@ describe("getDocs", () => {
   it("still enforces the host allowlist", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    expect(await getDocs("https://evil.example/llms.txt")).toContain("are allowed");
+    expect(await getDocs("https://evil.example/llms.txt")).toContain("Only OpenMail pages");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -174,7 +174,7 @@ describe("getDocs", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const out = await getDocs("https://docs.openmail.sh/old");
-    expect(out).toContain("disallowed");
+    expect(out).toContain("redirects outside the OpenMail docs");
     expect(fetchMock).not.toHaveBeenCalledWith(
       "https://evil.example/steal",
       expect.anything(),

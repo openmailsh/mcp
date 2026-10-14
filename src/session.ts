@@ -30,6 +30,11 @@ export const ALL_TOOLS = [
   "read_thread",
   "mark_thread_read",
   "get_attachment_text",
+  "search_mail",
+  "forward_message",
+  "update_inbox",
+  "delete_thread",
+  "delete_message",
   "list_domains",
   "get_domain",
   "add_domain",
@@ -101,11 +106,20 @@ export function visibleTools(ctx: SessionContext): ToolName[] {
 
   if (ctx.toolsets.has("mailbox")) {
     if (!inboxLocked) tools.push("list_inboxes");
-    tools.push("get_inbox", "list_unread_threads", "read_thread", "get_attachment_text");
+    tools.push("get_inbox", "list_unread_threads", "read_thread", "get_attachment_text", "search_mail");
     // Marking read is a write (PATCH /v1/threads/:id); readonly sessions get none.
     if (!ctx.readonly) tools.push("mark_thread_read");
     if (!ctx.readonly && hasScope(ctx, "send")) {
-      tools.push("send_email", "reply_to_thread");
+      tools.push("send_email", "reply_to_thread", "forward_message");
+    }
+    // The API refuses these to OAuth tokens (no consent scope covers them)
+    // and to scoped keys, so only list them where they can succeed.
+    if (!ctx.readonly && ctx.authKind === "api_key") {
+      // Inbox keys are read + send only, so a prompt-injected agent cannot
+      // empty the mailbox it reads from.
+      if (!ctx.apiKeyInboxId) tools.push("delete_thread", "delete_message");
+      // Reconfiguring an inbox (forwarding included) needs an account-wide key.
+      if (!ctx.apiKeyInboxId && !ctx.apiKeyPodId) tools.push("update_inbox");
     }
   }
 
@@ -140,6 +154,6 @@ export function assertLockedInbox(
   const locked = lockedInboxId(ctx);
   if (!locked) return;
   if (inboxId !== locked) {
-    throw new Error("This credential cannot access that inbox.");
+    throw new Error("Your credential doesn't have access to that inbox.");
   }
 }

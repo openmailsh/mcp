@@ -107,7 +107,7 @@ export function rankChunks(chunks: DocChunk[], query: string, limit = 5): DocChu
 
 export function formatSearchResults(chunks: DocChunk[]): string {
   if (chunks.length === 0) {
-    return "No matching docs. Try get_docs with https://docs.openmail.sh/quickstart";
+    return "No docs matched that search. Try other words, or start with the quickstart: https://docs.openmail.sh/quickstart";
   }
   return chunks
     .map((chunk) => {
@@ -146,11 +146,11 @@ async function fetchAllowed(url: string): Promise<Response> {
     if (!location) return res;
     const next = new URL(location, current).toString();
     if (!isAllowedDocsUrl(next)) {
-      throw new Error(`Redirect to disallowed URL: ${next}`);
+      throw new Error(`That page redirects outside the OpenMail docs, so it wasn't opened.`);
     }
     current = next;
   }
-  throw new Error(`Too many redirects fetching ${url}`);
+  throw new Error(`That page redirects too many times, so it couldn't be opened.`);
 }
 
 // --- Corpus cache: in-memory, 5-minute TTL, single-flight. -----------------
@@ -191,7 +191,7 @@ async function fetchCorpus(): Promise<DocChunk[]> {
     fetchSource(MARKETING_LLMS_URL, (text) => chunkMarkdown(text, MARKETING_LLMS_URL)),
   ]);
   if (!docs && !marketing) {
-    throw new Error(`Could not fetch docs. See ${DOCS_LLMS_FULL_URL}`);
+    throw new Error(`Couldn't load the OpenMail docs right now. Try again shortly, or browse https://docs.openmail.sh.`);
   }
   return [...(docs ?? []), ...(marketing ?? [])];
 }
@@ -247,7 +247,7 @@ function markdownVariant(target: string): string | null {
 export async function getDocs(url: string): Promise<string> {
   const target = url.trim() || MARKETING_LLMS_URL;
   if (!isAllowedDocsUrl(target)) {
-    return "Only openmail.sh and docs.openmail.sh URLs are allowed.";
+    return "Only OpenMail pages (openmail.sh or docs.openmail.sh) can be opened here.";
   }
   let res: Response;
   try {
@@ -263,7 +263,7 @@ export async function getDocs(url: string): Promise<string> {
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
   }
-  if (!res.ok) return `Could not fetch ${target} (${res.status}).`;
+  if (!res.ok) return `Couldn't open ${target} (error ${res.status}). Check the link, or search the docs instead.`;
   const text = await res.text();
   return text.length > 20000 ? `${text.slice(0, 20000)}\n\n…truncated` : text;
 }

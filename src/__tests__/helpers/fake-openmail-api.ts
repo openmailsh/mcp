@@ -27,9 +27,17 @@ export type FakeThread = {
   isRead: boolean;
   lastMessageAt: string;
   messages: FakeMessage[];
+  trashed?: boolean;
 };
 
-export type FakeInbox = { id: string; address: string; displayName?: string | null };
+export type FakeInbox = {
+  id: string;
+  address: string;
+  displayName?: string | null;
+  forwardTo?: string | null;
+  forwardWhen?: string | null;
+  forwardStatus?: string | null;
+};
 
 export type FakeState = {
   /** bearer token → who it is. Anything else is 401. */
@@ -39,7 +47,13 @@ export type FakeState = {
   attachments: Record<string, { inboxId: string; text: string }>;
   /** When set, GET /v1/me answers with this instead of looking the token up (simulates an API outage). */
   meFailure?: { status: number; body?: unknown };
+  /** Custom domains. A domain with a podId only accepts inboxes created with that podId. */
+  domains?: FakeDomain[];
+  /** When set, POST /v1/inboxes/{id}/send answers with this (cap hit, suspension). */
+  sendFailure?: { status: number; body: unknown };
 };
+
+export type FakeDomain = { id: string; domain: string; status: string; podId: string | null };
 
 export type RecordedRequest = {
   method: string;
@@ -114,14 +128,62 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
     if (method === "GET" && path === "/v1/inboxes") return json(200, { data: state.inboxes });
 
     if (method === "POST" && path === "/v1/inboxes") {
-      const b = (body ?? {}) as { mailboxName?: string; displayName?: string };
+      const b = (body ?? {}) as { mailboxName?: string; displayName?: string; domain?: string; podId?: string };
+      const custom = b.domain ? state.domains?.find((d) => d.domain === b.domain) : undefined;
+      if (b.domain && b.domain !== "omail.sh" && !custom) {
+        return json(400, { error: "invalid_domain", message: "Domain is not verified or does not belong to your account" });
+      }
+      if (custom?.podId && custom.podId !== b.podId) {
+        return json(400, { error: "invalid_domain", message: "This domain is not available in the selected pod" });
+      }
       const inbox: FakeInbox = {
         id: `inbox-new-${++seq}`,
-        address: `${b.mailboxName ?? `agent${seq}`}@omail.sh`,
+        address: `${b.mailboxName ?? `agent${seq}`}@${b.domain ?? "omail.sh"}`,
         displayName: b.displayName ?? null,
       };
       state.inboxes.push(inbox);
       return json(201, inbox);
+    }
+
+    if ((m = path.match(/^\/v1\/inboxes\/([^/]+)$/)) && method === "PATCH") {
+      const inbox = state.inboxes.find((i) => i.id === m![1]);
+      if (!inbox) return json(404, { error: "not_found", message: "Inbox not found" });
+      const b = (body ?? {}) as { displayName?: string | null; forwardTo?: string | null; forwardWhen?: string };
+      if (b.displayName !== undefined) inbox.displayName = b.displayName;
+      if (b.forwardTo !== undefined) {
+        inbox.forwardTo = b.forwardTo;
+        inbox.forwardStatus = b.forwardTo ? "pending" : null;
+        inbox.forwardWhen = b.forwardTo ? (b.forwardWhen ?? inbox.forwardWhen ?? "always") : null;
+      } else if (b.forwardWhen !== undefined) inbox.forwardWhen = b.forwardWhen;
+      return json(200, inbox);
+    }
+
+    if ((m = path.match(/^\/v1\/inboxes\/([^/]+)\/messages$/)) && method === "GET") {
+      const direction = url.searchParams.get("direction");
+      const limit = Number(url.searchParams.get("limit") ?? 50);
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const all = Object.values(state.threads)
+        .filter((t) => t.inboxId === m![1] && !t.trashed)
+        .flatMap((t) => t.messages.map((msg) => ({ ...msg, threadId: t.id, subject: t.subject })))
+        .filter((msg) => !direction || msg.direction === direction)
+        .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+      return json(200, { data: all.slice(offset, offset + limit), total: all.length });
+    }
+
+    if ((m = path.match(/^\/v1\/threads\/([^/]+)$/)) && method === "DELETE") {
+      const t = state.threads[m[1]];
+      if (!t || t.trashed) return json(404, { error: "not_found", message: "Thread not found" });
+      t.trashed = true;
+      res.writeHead(204);
+      return res.end();
+    }
+
+    if ((m = path.match(/^\/v1\/messages\/([^/]+)$/)) && method === "DELETE") {
+      const t = Object.values(state.threads).find((x) => x.messages.some((msg) => msg.id === m![1]));
+      if (!t) return json(404, { error: "not_found", message: "Message not found" });
+      t.messages = t.messages.filter((msg) => msg.id !== m![1]);
+      res.writeHead(204);
+      return res.end();
     }
 
     if ((m = path.match(/^\/v1\/inboxes\/([^/]+)$/)) && method === "GET") {
@@ -139,6 +201,7 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
     }
 
     if ((m = path.match(/^\/v1\/inboxes\/([^/]+)\/send$/)) && method === "POST") {
+      if (state.sendFailure) return json(state.sendFailure.status, state.sendFailure.body);
       const b = (body ?? {}) as { threadId?: string };
       return json(201, { id: `msg-sent-${++seq}`, threadId: b.threadId ?? `thread-new-${seq}` });
     }
@@ -149,7 +212,7 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
 
     if ((m = path.match(/^\/v1\/threads\/([^/]+)\/messages$/)) && method === "GET") {
       const t = state.threads[m[1]];
-      if (!t) return json(404, { error: "not_found", message: "Thread not found" });
+      if (!t || t.trashed) return json(404, { error: "not_found", message: "Thread not found" });
       return json(200, {
         threadId: t.id,
         inboxId: t.inboxId,
@@ -175,7 +238,13 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
     }
 
     if (method === "POST" && path === "/v1/feedback") return json(201, { ok: true });
-    if (method === "GET" && path === "/v1/domains") return json(200, { data: [] });
+    if (method === "GET" && path === "/v1/domains") return json(200, { data: state.domains ?? [] });
+
+    if ((m = path.match(/^\/v1\/domains\/([^/]+)(\/verify)?$/)) && (method === "GET" || method === "POST")) {
+      const d = state.domains?.find((x) => x.id === m![1]);
+      if (!d) return json(404, { error: "not_found", message: "Domain not found" });
+      return json(200, { ...d, records: [] });
+    }
 
     return json(404, { error: "not_found", message: `No fake route for ${method} ${path}` });
   });

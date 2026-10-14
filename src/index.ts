@@ -207,7 +207,7 @@ export function createApp(): express.Express {
       res.setHeader("WWW-Authenticate", wwwAuthenticate());
       res.status(401).json({
         error: "unauthorized",
-        error_description: "Sign in to OpenMail to use this MCP server. Docs-only access: /mcp/public",
+        error_description: "Sign in to OpenMail to use this server. To browse the docs without signing in, use /mcp/public.",
       });
       return;
     }
@@ -216,7 +216,7 @@ export function createApp(): express.Express {
       res.setHeader("WWW-Authenticate", wwwAuthenticate());
       res.status(401).json({
         error: "invalid_token",
-        error_description: "Invalid or missing OpenMail credential",
+        error_description: "Your OpenMail sign-in or API key isn't valid. Sign in again or check the key.",
       });
       return;
     }
@@ -224,7 +224,7 @@ export function createApp(): express.Express {
       // Not a 401: that would make clients discard a perfectly good key.
       res.status(503).json({
         error: "upstream_unavailable",
-        error_description: "OpenMail API is unavailable; retry shortly",
+        error_description: "OpenMail is temporarily unavailable. Try again in a minute.",
       });
       return;
     }
