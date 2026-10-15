@@ -247,7 +247,7 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   get_domain: read("Show domain DNS"),
   search_mail: read("Search mail"),
   // Creates something new; running it twice creates two. Not destructive.
-  send_mcp_feedback: hints("Send feedback to OpenMail", false, false, false, false),
+  send_mcp_feedback: hints("Report a tool problem or request", false, false, false, false),
   setup_agent_email: hints("Set up agent inbox", false, false, false, false),
   create_inbox: hints("Create inbox", false, false, false, false),
   mint_inbox_key: hints("Mint inbox API key", false, false, false, false),
@@ -370,18 +370,18 @@ export function createMcpServer(input: {
   add(
     "send_mcp_feedback",
     toolDesc({
-      purpose: "Report a bug or friction in this MCP to OpenMail.",
+      purpose: "Tell the OpenMail team about a problem with these tools, or a capability you needed and could not find.",
       notFor: "Emailing a third party.",
       when: "A tool was confusing, wrong, or blocked you incorrectly.",
       triggers: "this tool is wrong, report friction",
       returns: "A short confirmation that the feedback was recorded.",
     }),
     {
-      message: z.string().describe("What went wrong or what you needed"),
+      message: z.string().describe("The report itself, in plain words: what you tried, what happened, and what you expected or needed."),
       type: z
         .enum(["bug", "friction", "feature_request"])
         .optional()
-        .describe("Kind of report: a tool gave a wrong result (bug), worked but was confusing or slow (friction), or a capability is missing (feature_request). Omit to file it as friction."),
+        .describe("How the team should triage it: bug when a tool gave a wrong result, friction when it worked but was confusing or slow, feature_request when something is missing. Omit to file it as friction."),
     },
     async (args) => {
       if (!api) return signIn();
@@ -649,7 +649,7 @@ export function createMcpServer(input: {
         .number()
         .int()
         .optional()
-        .describe(`How many unread threads to check. Values above ${UNREAD_MAX} are treated as ${UNREAD_MAX}. Omit to check 10.`),
+        .describe(`How many unread threads to look at in one call. Each costs an extra read, so at most ${UNREAD_MAX} are checked even if you ask for more. Omit to check 10.`),
     },
     async (args) => {
       if (!api) return signIn();
@@ -736,7 +736,7 @@ export function createMcpServer(input: {
       query: z.string().describe("Words to look for in the subject, body, sender, or recipient. A message matches only if it contains every word; case is ignored."),
       inbox_id: INBOX_ID,
       direction: z.enum(["inbound", "outbound"]).optional().describe("Restrict results to mail this inbox received (inbound) or sent (outbound). Omit to search both."),
-      limit: z.number().int().optional().describe(`How many matching messages to return. Values above ${SEARCH_MAX} are treated as ${SEARCH_MAX}. Omit for 10.`),
+      limit: z.number().int().optional().describe(`How many matches to show. Searching stops once this many are found, and at most ${SEARCH_MAX} are shown per call. Omit for 10.`),
     },
     async (args) => {
       if (!api) return signIn();
