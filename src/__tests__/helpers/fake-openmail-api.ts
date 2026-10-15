@@ -245,6 +245,15 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
 
     if (method === "POST" && path === "/v1/feedback") return json(201, { ok: true });
     if (method === "GET" && path === "/v1/domains") return json(200, { data: state.domains ?? [] });
+    if (method === "POST" && path === "/v1/domains") {
+      const name = String((body as { domain?: string } | undefined)?.domain ?? "");
+      return json(201, {
+        id: `dom-${name}`,
+        domain: name,
+        status: "pending",
+        records: [{ type: "TXT", name: `_openmail.${name}`, value: "verify=abc", purpose: "verification", status: "pending", priority: null }],
+      });
+    }
 
     if ((m = path.match(/^\/v1\/domains\/([^/]+)(\/verify)?$/)) && (method === "GET" || method === "POST")) {
       const d = state.domains?.find((x) => x.id === m![1]);
