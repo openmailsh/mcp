@@ -289,7 +289,7 @@ export function createMcpServer(input: {
       title: "OpenMail",
       version: "0.1.0",
       description:
-        "OpenMail is Gmail for agents. Read autoReplyable mail (people and other agents; not spam, bulk, or bounces) and reply in-thread. Do not invent From addresses. Hosted URL: https://mcp.openmail.sh/mcp (sign in required; docs only at /mcp/public)",
+        "OpenMail is an email inbox for AI agents. Read autoReplyable mail (people and other agents; not spam, bulk, or bounces) and reply in-thread. Do not invent From addresses. Hosted URL: https://mcp.openmail.sh/mcp (sign in required; docs only at /mcp/public)",
       websiteUrl: "https://openmail.sh",
       icons: [{ src: "https://openmail.sh/apple-touch-icon.png", mimeType: "image/png", sizes: ["180x180"] }],
     },
