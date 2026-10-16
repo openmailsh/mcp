@@ -280,7 +280,7 @@ export function formatMe(me: {
 
 export const INSTALL_MARKDOWN = `# OpenMail MCP
 
-Gmail for agents. Hosted at \`https://mcp.openmail.sh/mcp\`.
+Email inbox for AI agents. Hosted at \`https://mcp.openmail.sh/mcp\`.
 
 ## Claude / OAuth
 

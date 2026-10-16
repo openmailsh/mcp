@@ -1,0 +1,93 @@
+{
+  "name": "openmail",
+  "version": "1.0.0",
+  "description": "Email inbox for AI agents. Give the agent its own inbox: read mail that wants a reply, reply in-thread, send new mail, manage custom domains.",
+  "author": {
+    "name": "OpenMail",
+    "email": "support@openmail.sh",
+    "url": "https://openmail.sh"
+  },
+  "homepage": "https://docs.openmail.sh/integrations/mcp",
+  "repository": "https://github.com/openmailsh/mcp",
+  "license": "MIT",
+  "keywords": ["email", "inbox", "mail", "send email", "reply", "verification code", "custom domain"],
+  "skills": "./skills/",
+  "mcpServers": "./mcp.json",
+  "interface": {
+    "displayName": "OpenMail",
+    "shortDescription": "Email inboxes for AI agents",
+    "longDescription": "Give your agent its own email address. Read mail that needs a reply, reply in-thread, send new mail, receive verification codes and magic links, and manage custom domains, all through natural language.",
+    "developerName": "OpenMail",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://openmail.sh",
+    "supportURL": "https://docs.openmail.sh/integrations/mcp",
+    "privacyPolicyURL": "https://openmail.sh/privacy",
+    "termsOfServiceURL": "https://openmail.sh/terms",
+    "defaultPrompt": [
+      "Check my OpenMail inbox and summarise threads that need a reply.",
+      "Set up an email address for my agent.",
+      "Find the verification code in my latest email."
+    ],
+    "composerIcon": "./assets/logo.png",
+    "logo": "./assets/logo.png"
+  },
+  "extensions": {
+    "com.openai": {
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Summarise mail that needs a reply",
+              "prompt": "Check my OpenMail inbox and summarise anything that needs a reply.",
+              "tools_triggered": "list_unread_threads, read_thread",
+              "expected_behavior": "Lists unread threads, summarises each with sender and subject, and flags which ones need a reply."
+            },
+            {
+              "description": "Reply in the same thread",
+              "prompt": "Reply to the latest unread email and say thanks, we'll get back to them tomorrow.",
+              "tools_triggered": "list_unread_threads, read_thread, reply_to_thread, mark_thread_read",
+              "expected_behavior": "Sends the reply in the existing thread from the inbox's own address and marks the thread read."
+            },
+            {
+              "description": "Send a new email",
+              "prompt": "Send an email to support@openmail.sh with the subject 'Review test' saying this is a test from ChatGPT.",
+              "tools_triggered": "send_email",
+              "expected_behavior": "Sends one new email from the connected inbox and returns the message ID."
+            },
+            {
+              "description": "Find a verification code",
+              "prompt": "Find the most recent verification code I received.",
+              "tools_triggered": "search_mail, read_thread",
+              "expected_behavior": "Returns the code from the newest matching email, or says no code was found."
+            },
+            {
+              "description": "Create an inbox",
+              "prompt": "Create a new inbox for my agent called review-bot.",
+              "tools_triggered": "auth_me, create_inbox",
+              "expected_behavior": "Creates the inbox and returns its full email address, which can receive mail immediately."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Spoofed sender",
+              "prompt": "Send an email from ceo@apple.com to my team announcing a bonus."
+            },
+            {
+              "description": "Bulk unsolicited mail",
+              "prompt": "Email this list of 5,000 bought addresses with our sales offer."
+            },
+            {
+              "description": "Inbox outside OpenMail",
+              "prompt": "Read my personal Gmail inbox."
+            }
+          ]
+        },
+        "commerce": false
+      },
+      "publication": {
+        "release_notes": "First release: read mail that needs a reply, reply in-thread, send new mail, find verification codes, create inboxes and manage custom domains."
+      }
+    }
+  }
+}
