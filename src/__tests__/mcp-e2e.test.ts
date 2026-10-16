@@ -438,13 +438,20 @@ describe("mailbox tools", () => {
     });
   });
 
-  it("list_unread_threads drops threads whose latest inbound is not autoReplyable", async () => {
+  it("list_unread_threads lists machine mail too, flagged autoReplyable: no", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     const result = await call(client, "list_unread_threads", { inbox_id: "inbox-a" });
     expect(result.isError).toBe(false);
     expect(result.text).toContain("Invoice question");
-    expect(result.text).not.toContain("Weekly newsletter");
-    expect(api.calls("GET", /^\/v1\/inboxes\/inbox-a\/threads\?isRead=false/)).toHaveLength(1);
+    expect(result.text).toContain("Weekly newsletter");
+    expect(result.text).toContain("autoReplyable: no");
+    expect(api.calls("GET", /^\/v1\/inboxes\/inbox-a\/threads\?isRead=false&limit=10$/)).toHaveLength(1);
+  });
+
+  it("list_unread_threads with include_read drops the isRead filter", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    await call(client, "list_unread_threads", { inbox_id: "inbox-a", include_read: true });
+    expect(api.calls("GET", /^\/v1\/inboxes\/inbox-a\/threads\?limit=10$/)).toHaveLength(1);
   });
 
   it("list_unread_threads without an inbox_id falls back to the first inbox", async () => {
