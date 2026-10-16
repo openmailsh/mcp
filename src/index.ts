@@ -185,23 +185,25 @@ export function createApp(): express.Express {
     /^\/\.well-known\/oauth-protected-resource(\/.*)?$/,
     wellKnown,
   );
-  app.get("/.well-known/oauth-authorization-server", (_req, res) => {
-    const issuer = mcpIssuer();
-    res.json({
-      issuer,
-      authorization_endpoint: `${(process.env.CONSOLE_ORIGIN || "https://console.openmail.sh").replace(/\/+$/, "")}/mcp/oauth/authorize`,
-      token_endpoint: `${issuer}/oauth/token`,
-      registration_endpoint: `${issuer}/oauth/register`,
-      revocation_endpoint: `${issuer}/oauth/revoke`,
-      scopes_supported: ["read", "setup", "send", "domains"],
-      response_types_supported: ["code"],
-      grant_types_supported: ["authorization_code", "refresh_token"],
-      code_challenge_methods_supported: ["S256"],
-      token_endpoint_auth_methods_supported: ["none"],
-    });
+  // No /.well-known/oauth-authorization-server here. The authorization server
+  // is api.openmail.sh, advertised through oauth-protected-resource above.
+  // Serving AS metadata on this origin with issuer api.openmail.sh breaks
+  // RFC 8414's issuer check, and Codex/ChatGPT abort sign-in on it. A 404
+  // makes them follow the protected-resource document instead.
+
+  app.get("/", (_req, res) => {
+    res.type("text/markdown").send(INSTALL_MARKDOWN);
   });
 
-  app.get(["/", "/mcp"], (_req, res) => {
+  // Codex and ChatGPT probe with a plain GET before connecting. Without a
+  // token that probe must get the 401 + WWW-Authenticate challenge, or they
+  // never find the protected-resource metadata and guess at OAuth on this
+  // origin. The install text stays as the body for people opening the URL.
+  app.get("/mcp", (req, res) => {
+    if (!bearerToken(req)) {
+      res.setHeader("WWW-Authenticate", wwwAuthenticate());
+      res.status(401);
+    }
     res.type("text/markdown").send(INSTALL_MARKDOWN);
   });
 

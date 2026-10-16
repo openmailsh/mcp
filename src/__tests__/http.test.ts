@@ -9,9 +9,19 @@ describe("hosted MCP http", () => {
     expect(health.status).toBe(200);
     expect(health.body.status).toBe("ok");
 
-    const install = await request(app).get("/mcp");
+    const install = await request(app).get("/");
     expect(install.status).toBe(200);
     expect(install.text).toContain("https://mcp.openmail.sh/mcp");
+
+    // No token: the probe must be challenged so clients start OAuth.
+    const probe = await request(app).get("/mcp");
+    expect(probe.status).toBe(401);
+    expect(probe.headers["www-authenticate"]).toContain("resource_metadata=");
+    expect(probe.text).toContain("https://mcp.openmail.sh/mcp");
+
+    // AS metadata lives only on the issuer (api.openmail.sh).
+    const as = await request(app).get("/.well-known/oauth-authorization-server");
+    expect(as.status).toBe(404);
 
     const meta = await request(app).get("/.well-known/oauth-protected-resource");
     expect(meta.status).toBe(200);
