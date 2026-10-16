@@ -41,7 +41,7 @@
               "description": "Summarise mail that needs a reply",
               "prompt": "Check my OpenMail inbox and summarise anything that needs a reply.",
               "tools_triggered": "list_unread_threads, read_thread",
-              "expected_behavior": "Lists unread threads from people, skipping bounces and newsletters, and summarises each with sender and subject."
+              "expected_behavior": "Lists unread threads, summarises each with sender and subject, and flags which ones need a reply."
             },
             {
               "description": "Reply in the same thread",
