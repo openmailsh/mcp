@@ -5,7 +5,7 @@
   "description": "Email inbox for AI agents. Give the agent its own inbox: read mail that wants a reply, reply in-thread, send new mail, manage custom domains.",
   "author": {
     "name": "OpenMail",
-    "email": "support@openmail.sh"
+    "email": "support@openmail.to"
   },
   "homepage": "https://docs.openmail.sh/integrations/mcp",
   "repository": "https://github.com/openmailsh/mcp",

@@ -4,7 +4,7 @@
   "description": "Email inbox for AI agents. Give the agent its own inbox: read mail that wants a reply, reply in-thread, send new mail, manage custom domains.",
   "author": {
     "name": "OpenMail",
-    "email": "support@openmail.sh",
+    "email": "support@openmail.to",
     "url": "https://openmail.sh"
   },
   "homepage": "https://docs.openmail.sh/integrations/mcp",
@@ -51,7 +51,7 @@
             },
             {
               "description": "Send a new email",
-              "prompt": "Send an email to support@openmail.sh with the subject 'Review test' saying this is a test from ChatGPT.",
+              "prompt": "Send an email to support@openmail.to with the subject 'Review test' saying this is a test from ChatGPT.",
               "tools_triggered": "send_email",
               "expected_behavior": "Sends one new email from the connected inbox and returns the message ID."
             },
