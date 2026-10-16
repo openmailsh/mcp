@@ -21,6 +21,12 @@ describe("hosted MCP http", () => {
     );
   });
 
+  it("serves the OpenAI Apps domain challenge token", async () => {
+    const res = await request(createApp()).get("/.well-known/openai-apps-challenge");
+    expect(res.status).toBe(200);
+    expect(res.text).toBe("TC5aZS0XkGJ9ecnhNE5mmzooru7PPsLPBnililVHOjE");
+  });
+
   it("canonicalizes MCP_RESOURCE_URL with a /mcp suffix", async () => {
     const previous = process.env.MCP_RESOURCE_URL;
     process.env.MCP_RESOURCE_URL = "https://mcp.openmail.sh/mcp/";

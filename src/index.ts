@@ -17,6 +17,8 @@ const API_URL = (process.env.OPENMAIL_API_URL || "https://api.openmail.sh").repl
   "",
 );
 
+const OPENAI_APPS_CHALLENGE_TOKEN = "TC5aZS0XkGJ9ecnhNE5mmzooru7PPsLPBnililVHOjE";
+
 function cors(res: express.Response) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, MCP-Session-Id, MCP-Protocol-Version, X-MCP-Toolsets");
@@ -168,6 +170,12 @@ export function createApp(): express.Express {
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // OpenAI Apps domain verification. The token is public by design: OpenAI
+  // fetches it from this URL to prove we control mcp.openmail.sh.
+  app.get("/.well-known/openai-apps-challenge", (_req, res) => {
+    res.type("text/plain").send(OPENAI_APPS_CHALLENGE_TOKEN);
   });
 
   const wellKnown: express.RequestHandler = (_req, res) => {

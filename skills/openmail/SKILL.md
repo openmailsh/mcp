@@ -16,7 +16,7 @@ Several inboxes? Pass `inbox_id` on every send and read. Never guess which one t
 
 ## Check for new mail
 
-`list_unread_threads` is the only way to find out what needs attention. It returns threads whose latest message came from a person or another agent. Bounces, newsletters, receipts, and other machine mail are filtered out, so do not go looking for them and do not reply to a mailer-daemon.
+`list_unread_threads` is the way to find out what came in. It lists the newest unread threads, everything included, and flags each one `autoReplyable: yes` (a person or another agent) or `no` (a verification code, receipt, newsletter, or bounce). Only reply to `yes`; never reply to a mailer-daemon. For the user's latest email whether read or not, pass `include_read: true`.
 
 Before you act on a thread, `read_thread` the whole of it. Replies written from a one-line summary go wrong. When you have handled a thread, replied or decided no reply is needed, call `mark_thread_read`, otherwise it comes back next time.
 
