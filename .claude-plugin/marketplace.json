@@ -2,7 +2,7 @@
   "name": "openmailsh-mcp",
   "owner": {
     "name": "OpenMail",
-    "email": "support@openmail.sh"
+    "email": "support@openmail.to"
   },
   "metadata": {
     "description": "OpenMail hosted MCP server: give the agent its own inbox",

@@ -232,11 +232,11 @@ function errorHint(code: string, body: unknown): string | null {
         `Limit: ${limit}${scope}. Resets ${until}.`,
         "Only first contact to an address that never wrote this inbox counts. Replies in an existing thread and follow-ups to people already emailed still send now.",
         "Wait until the reset for the remaining new recipients; trying sooner fails the same way.",
-        "To raise the limit: upgrade the plan at https://console.openmail.sh/settings/billing, or ask support@openmail.sh for a review.",
+        "To raise the limit: upgrade the plan at https://console.openmail.sh/settings/billing, or ask support@openmail.to for a review.",
       ].join("\n");
     }
     case "reputation_suspended":
-      return "Sending is paused on this account until OpenMail support reviews it, so retrying will fail. Contact support@openmail.sh. Reading mail still works.";
+      return "Sending is paused on this account until OpenMail support reviews it, so retrying will fail. Contact support@openmail.to. Reading mail still works.";
     case "invalid_domain":
       return "That domain can't be used yet: only verified custom domains work. Check the domain list for its status, or leave the domain out to use an omail.sh address.";
     default:

@@ -6,7 +6,7 @@ the hosted service, tell us privately first.
 
 ## Reporting
 
-Email **support@openmail.sh** with:
+Email **support@openmail.to** with:
 
 - What you found and where (file, endpoint, or tool)
 - Steps to reproduce

@@ -4,21 +4,21 @@
   "description": "Email inbox for AI agents. Give the agent its own inbox: read mail that wants a reply, reply in-thread, send new mail, manage custom domains.",
   "author": {
     "name": "OpenMail",
-    "email": "support@openmail.sh",
+    "email": "support@openmail.to",
     "url": "https://openmail.sh"
   },
   "homepage": "https://docs.openmail.sh/integrations/mcp",
   "repository": "https://github.com/openmailsh/mcp",
   "license": "MIT",
-  "keywords": ["email", "inbox", "mail", "send email", "reply", "verification code", "custom domain"],
+  "keywords": ["email", "inbox", "mail", "send email", "reply", "custom domain"],
   "skills": "./skills/",
   "mcpServers": "./mcp.json",
   "interface": {
     "displayName": "OpenMail",
     "shortDescription": "Email inboxes for AI agents",
-    "longDescription": "Give your agent its own email address. Read mail that needs a reply, reply in-thread, send new mail, receive verification codes and magic links, and manage custom domains, all through natural language.",
+    "longDescription": "OpenMail is email for AI agents. Give your agent its own email address, then read incoming mail, reply in the same thread, send new emails, search past mail, and set up custom domains, all from chat.",
     "developerName": "OpenMail",
-    "category": "Productivity",
+    "category": "Communication",
     "capabilities": ["Read", "Write"],
     "websiteURL": "https://openmail.sh",
     "supportURL": "https://docs.openmail.sh/integrations/mcp",
@@ -27,7 +27,7 @@
     "defaultPrompt": [
       "Check my OpenMail inbox and summarise threads that need a reply.",
       "Set up an email address for my agent.",
-      "Find the verification code in my latest email."
+      "Search my mail for the latest invoice."
     ],
     "composerIcon": "./assets/logo.png",
     "logo": "./assets/logo.png"
@@ -51,15 +51,15 @@
             },
             {
               "description": "Send a new email",
-              "prompt": "Send an email to support@openmail.sh with the subject 'Review test' saying this is a test from ChatGPT.",
+              "prompt": "Send an email to support@openmail.to with the subject 'Review test' saying this is a test from ChatGPT.",
               "tools_triggered": "send_email",
               "expected_behavior": "Sends one new email from the connected inbox and returns the message ID."
             },
             {
-              "description": "Find a verification code",
-              "prompt": "Find the most recent verification code I received.",
+              "description": "Search past mail",
+              "prompt": "Find the email about invoice #1042 and tell me what they are asking for.",
               "tools_triggered": "search_mail, read_thread",
-              "expected_behavior": "Returns the code from the newest matching email, or says no code was found."
+              "expected_behavior": "Finds the invoice thread and summarises the request: payment status for the EUR 480 invoice sent on 2 October."
             },
             {
               "description": "Create an inbox",
@@ -86,7 +86,7 @@
         "commerce": false
       },
       "publication": {
-        "release_notes": "First release: read mail that needs a reply, reply in-thread, send new mail, find verification codes, create inboxes and manage custom domains."
+        "release_notes": "First release: read mail that needs a reply, reply in-thread, send new mail, search mail, create inboxes and manage custom domains."
       }
     }
   }
