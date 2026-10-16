@@ -112,7 +112,6 @@ describe("visibleTools", () => {
         "list_inboxes",
         "get_inbox",
         "list_unread_threads",
-        "list_recent_threads",
         "read_thread",
         "get_attachment_text",
         "search_mail",
@@ -121,7 +120,7 @@ describe("visibleTools", () => {
         "get_domain",
       ].sort(),
     );
-    expect(tools).toHaveLength(14);
+    expect(tools).toHaveLength(13);
   });
 });
 

@@ -16,9 +16,7 @@ Several inboxes? Pass `inbox_id` on every send and read. Never guess which one t
 
 ## Check for new mail
 
-`list_unread_threads` is the way to find out what needs a reply. It returns threads whose latest message came from a person or another agent. Bounces, newsletters, receipts, and other machine mail are filtered out, so do not reply to a mailer-daemon.
-
-When the user asks for their latest or most recent email, or for mail a machine sent (a code, a receipt, a newsletter), use `list_recent_threads`. It lists the newest threads with nothing filtered out; pass `unread_only: true` for new mail only.
+`list_unread_threads` is the way to find out what came in. It lists the newest unread threads, everything included, and flags each one `autoReplyable: yes` (a person or another agent) or `no` (a verification code, receipt, newsletter, or bounce). Only reply to `yes`; never reply to a mailer-daemon. For the user's latest email whether read or not, pass `include_read: true`.
 
 Before you act on a thread, `read_thread` the whole of it. Replies written from a one-line summary go wrong. When you have handled a thread, replied or decided no reply is needed, call `mark_thread_read`, otherwise it comes back next time.
 
@@ -37,7 +35,7 @@ Do not invent a From address. Mail leaves from the inbox you pass (or the only i
 Reply to a message you sent, confirmation link, verification code: the pattern is the same.
 
 1. Send, and keep the returned `thread` id.
-2. Call `list_unread_threads` roughly once a minute, not faster; mail takes time to arrive. For a code or confirmation link, which usually come from a machine, use `list_recent_threads` with `unread_only: true` instead.
+2. Call `list_unread_threads` roughly once a minute, not faster; mail takes time to arrive.
 3. When the expected thread appears, `read_thread` it and act on the content.
 4. `mark_thread_read`.
 

@@ -12,7 +12,6 @@ import {
   formatInboxes,
   formatMe,
   formatThread,
-  formatThreads,
   formatSearch,
   formatTimestamp,
 } from "./format.js";
@@ -246,7 +245,6 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   list_domains: read("List domains"),
   get_domain: read("Show domain DNS"),
   search_mail: read("Search mail"),
-  list_recent_threads: read("List recent mail"),
   // Creates something new; running it twice creates two. Not destructive.
   send_mcp_feedback: hints("Send feedback to OpenMail", false, false, false, false),
   setup_agent_email: hints("Set up agent inbox", false, false, false, false),
@@ -271,8 +269,8 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
 export const SERVER_INSTRUCTIONS = [
   "OpenMail gives the agent its own email inboxes.",
   "Start with auth_me to see which credential and inbox you have. No inbox yet: setup_agent_email (plan first, then execute=true).",
-  "Mailbox loop: list_unread_threads → read_thread → reply_to_thread → mark_thread_read. Only reply to messages marked autoReplyable: yes.",
-  "For the latest or most recent email, or mail like codes and receipts, use list_recent_threads; list_unread_threads hides machine mail.",
+  "Mailbox loop: list_unread_threads → read_thread → reply_to_thread → mark_thread_read. It lists machine mail too; only reply to threads marked autoReplyable: yes.",
+  "For the latest or most recent email, call list_unread_threads with include_read: true. It lists machine mail too, flagged autoReplyable: no.",
   "Use reply_to_thread for replies and send_email only for new conversations. Pass inbox_id when the account has more than one inbox (list_inboxes).",
   "Never invent From addresses or paste API keys into chat. Custom domains: add_domain → user publishes DNS → verify_domain.",
   "Unsure how something works: search_docs, then get_docs.",
@@ -639,85 +637,42 @@ export function createMcpServer(input: {
   add(
     "list_unread_threads",
     toolDesc({
-      purpose: "Unread threads whose latest message is autoReplyable: from a person or another agent, not machine-generated.",
-      notFor: "Spam, marketing, or bounces — those are filtered out.",
-      when: "The mailbox loop: what needs a reply.",
-      triggers: "unread mail, anything that needs a reply",
-      returns: "Each thread's subject, latest inbound sender, and thread id, or a note that nothing needs a reply.",
-    }),
-    {
-      inbox_id: INBOX_ID,
-      limit: z
-        .number()
-        .int()
-        .optional()
-        .describe(`How many unread threads to check. Values above ${UNREAD_MAX} are treated as ${UNREAD_MAX}. Omit to check 10.`),
-    },
-    async (args) => {
-      if (!api) return signIn();
-      const inbox = await resolveInbox(ctx, api, args.inbox_id as string | undefined);
-      const id = inbox.id;
-      // Clamp instead of rejecting: agents ask for 50 or 100, and a schema
-      // error there cost them the whole call.
-      const limit = Math.min(UNREAD_MAX, Math.max(1, Number(args.limit ?? 10) || 10));
-      const listed = (await api.get(
-        `/v1/inboxes/${id}/threads?isRead=false&limit=${limit}`,
-      )) as {
-        data: Array<{ id: string; subject: string | null; lastMessageAt: string }>;
-      };
-      const rows = [];
-      for (const thread of listed.data ?? []) {
-        const full = await loadThread(ctx, api, thread.id);
-        const inbound = [...(full.data ?? [])]
-          .reverse()
-          .find((m) => m.direction === "inbound");
-        if (inbound && inbound.autoReplyable === false) continue;
-        rows.push({
-          id: thread.id,
-          subject: thread.subject,
-          from: inbound?.fromAddr,
-          lastMessageAt: thread.lastMessageAt,
-        });
-      }
-      // Only name the inbox when we picked it: an explicit inbox_id or a
-      // locked key already tells the caller where it looked.
-      return text(formatThreads(rows, inbox.defaulted ? inbox : undefined));
-    },
-  );
-
-  add(
-    "list_recent_threads",
-    toolDesc({
-      purpose: "Newest threads in one inbox, read or unread, including machine mail such as verification codes, receipts, and newsletters.",
-      notFor: "Deciding what to reply to (use list_unread_threads, which hides machine mail).",
-      when: "The user asks for their latest, newest, or most recent email, or any mail regardless of who sent it.",
-      triggers: "my last email, latest email, newest message, what came in, recent mail, did I get a code",
+      purpose: "Newest unread threads in one inbox, everything included: mail from people and agents, and machine mail such as verification codes, receipts, newsletters, and bounces. Each thread is flagged autoReplyable yes or no.",
+      notFor: "Replying to machine mail: only reply to threads marked autoReplyable: yes.",
+      when: "The mailbox loop, or the user asks for new, latest, or most recent email. Pass include_read for the latest mail whether read or not.",
+      triggers: "unread mail, anything that needs a reply, my last email, latest email, what came in, did I get a code",
       returns: "Each thread's subject, latest inbound sender, read or unread, time, autoReplyable flag, and thread id.",
     }),
     {
       inbox_id: INBOX_ID,
-      unread_only: z.boolean().optional().describe("Only unread threads. Omit to include read ones."),
+      include_read: z.boolean().optional().describe("Also list threads already read, e.g. for 'my last email'. Omit for unread only."),
       limit: z
         .number()
         .int()
         .optional()
-        .describe(`How many threads to return, newest first. Values above ${UNREAD_MAX} are treated as ${UNREAD_MAX}. Omit for 5.`),
+        .describe(`How many threads to return, newest first. Values above ${UNREAD_MAX} are treated as ${UNREAD_MAX}. Omit for 10.`),
     },
     async (args) => {
       if (!api) return signIn();
       const inbox = await resolveInbox(ctx, api, args.inbox_id as string | undefined);
-      const limit = Math.min(UNREAD_MAX, Math.max(1, Number(args.limit ?? 5) || 5));
-      const params = new URLSearchParams({ limit: String(limit) });
-      if (args.unread_only) params.set("isRead", "false");
+      // Clamp instead of rejecting: agents ask for 50 or 100, and a schema
+      // error there cost them the whole call.
+      const limit = Math.min(UNREAD_MAX, Math.max(1, Number(args.limit ?? 10) || 10));
+      const unreadOnly = !args.include_read;
+      const params = new URLSearchParams();
+      if (unreadOnly) params.set("isRead", "false");
+      params.set("limit", String(limit));
       const listed = (await api.get(`/v1/inboxes/${inbox.id}/threads?${params}`)) as {
         data: Array<{ id: string; subject: string | null; isRead: boolean; lastMessageAt: string }>;
       };
+      // Name the inbox: "nothing" on an account key is otherwise ambiguous.
       const scope = inbox.address || inbox.id;
+      const kind = unreadOnly ? "unread threads" : "threads";
       const threads = listed.data ?? [];
       if (threads.length === 0) {
-        return text(`No ${args.unread_only ? "unread " : ""}threads in ${scope}.`);
+        return text(`No ${kind} in ${scope}.`);
       }
-      const lines = [`Newest ${args.unread_only ? "unread " : ""}threads in ${scope}:`];
+      const lines = [`Newest ${kind} in ${scope}:`];
       for (const thread of threads) {
         const full = await loadThread(ctx, api, thread.id);
         const inbound = [...(full.data ?? [])].reverse().find((m) => m.direction === "inbound");
