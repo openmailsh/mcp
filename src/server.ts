@@ -21,6 +21,70 @@ function text(markdown: string, isError = false) {
   return { content: [{ type: "text" as const, text: markdown }], isError };
 }
 
+/**
+ * A data tool's result: the same markdown the agent reads, plus the fields as
+ * `structuredContent` (validated against the tool's outputSchema) for clients
+ * and widgets that want exact values instead of parsing text.
+ */
+function data(markdown: string, structured: Record<string, unknown>) {
+  return { content: [{ type: "text" as const, text: markdown }], structuredContent: structured, isError: false };
+}
+
+// --- Output schemas: only for tools whose result is data, not prose. -------
+const INBOX_OUT = z.object({
+  id: z.string(),
+  address: z.string(),
+  displayName: z.string().nullable(),
+});
+const DOMAIN_ROW_OUT = z.object({
+  id: z.string(),
+  domain: z.string(),
+  status: z.string().describe("Verification status, e.g. pending or verified."),
+  podId: z.string().nullable(),
+});
+const DNS_OUT = {
+  id: z.string().nullable().describe("Domain id, when the API returned it."),
+  domain: z.string(),
+  status: z.string().describe("Verification status, e.g. pending or verified."),
+  records: z.array(
+    z.object({
+      type: z.string(),
+      name: z.string(),
+      value: z.string(),
+      priority: z.number().nullable(),
+      purpose: z.string().nullable(),
+      status: z.string().nullable(),
+    }),
+  ),
+};
+
+type DnsResponse = {
+  id?: string;
+  domain: string;
+  status: string;
+  records?: Array<{ type: string; name: string; value: string; purpose?: string | null; status?: string | null; priority?: number | null }>;
+};
+
+function dnsData(d: DnsResponse) {
+  return {
+    id: d.id ?? null,
+    domain: d.domain,
+    status: d.status,
+    records: (d.records ?? []).map((r) => ({
+      type: r.type,
+      name: r.name,
+      value: r.value,
+      priority: r.priority ?? null,
+      purpose: r.purpose ?? null,
+      status: r.status ?? null,
+    })),
+  };
+}
+
+function inboxData(i: { id: string; address: string; displayName?: string | null }) {
+  return { id: i.id, address: i.address, displayName: i.displayName ?? null };
+}
+
 const CC_SCHEMA = z.array(z.string().email()).optional().describe("People to copy on the email. Every recipient sees who was copied.");
 const BCC_SCHEMA = z
   .array(z.string().email())
@@ -247,7 +311,7 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   get_domain: read("Show domain DNS"),
   search_mail: read("Search mail"),
   // Creates something new; running it twice creates two. Not destructive.
-  send_mcp_feedback: hints("Send feedback to OpenMail", false, false, false, false),
+  send_mcp_feedback: hints("Report a tool problem or request", false, false, false, false),
   setup_agent_email: hints("Set up agent inbox", false, false, false, false),
   create_inbox: hints("Create inbox", false, false, false, false),
   mint_inbox_key: hints("Mint inbox API key", false, false, false, false),
@@ -300,12 +364,24 @@ export function createMcpServer(input: {
     name: ToolName,
     description: string,
     schema: Record<string, z.ZodTypeAny>,
-    handler: (args: Record<string, unknown>) => Promise<{ content: { type: "text"; text: string }[]; isError?: boolean }>,
+    handler: (args: Record<string, unknown>) => Promise<{
+      content: { type: "text"; text: string }[];
+      structuredContent?: Record<string, unknown>;
+      isError?: boolean;
+    }>,
+    /** Set only when every successful result carries matching structuredContent. */
+    outputSchema?: Record<string, z.ZodTypeAny>,
   ) => {
     if (!allowed.has(name)) return;
     server.registerTool(
       name,
-      { title: TOOL_ANNOTATIONS[name].title, description, inputSchema: schema, annotations: TOOL_ANNOTATIONS[name] },
+      {
+        title: TOOL_ANNOTATIONS[name].title,
+        description,
+        inputSchema: schema,
+        ...(outputSchema ? { outputSchema } : {}),
+        annotations: TOOL_ANNOTATIONS[name],
+      },
       async (args) => {
         try {
           return await handler(args as Record<string, unknown>);
@@ -363,25 +439,41 @@ export function createMcpServer(input: {
     {},
     async () => {
       if (!me) return signIn();
-      return text(formatMe({ ...me, inboxId: ctx.inboxId || ctx.apiKeyInboxId }));
+      const inboxId = ctx.inboxId || ctx.apiKeyInboxId || null;
+      return data(formatMe({ ...me, inboxId }), {
+        customerId: me.customerId,
+        plan: me.plan,
+        apiKeyScope: me.apiKeyScope,
+        oauthScopes: me.mcpScopes,
+        lockedInboxId: inboxId,
+      });
+    },
+    {
+      customerId: z.string(),
+      plan: z.string(),
+      apiKeyScope: z
+        .union([z.literal("account"), z.object({ podId: z.string().nullable(), inboxId: z.string().nullable() })])
+        .describe("`account` for an account-wide key; otherwise the pod or inbox the key is limited to."),
+      oauthScopes: z.array(z.string()).nullable().describe("Granted OAuth scopes; null when signed in with an API key."),
+      lockedInboxId: z.string().nullable().describe("The only inbox this session can use, or null when it can use any."),
     },
   );
 
   add(
     "send_mcp_feedback",
     toolDesc({
-      purpose: "Report a bug or friction in this MCP to OpenMail.",
+      purpose: "Tell the OpenMail team about a problem with these tools, or a capability you needed and could not find.",
       notFor: "Emailing a third party.",
       when: "A tool was confusing, wrong, or blocked you incorrectly.",
       triggers: "this tool is wrong, report friction",
       returns: "A short confirmation that the feedback was recorded.",
     }),
     {
-      message: z.string().describe("What went wrong or what you needed"),
+      message: z.string().describe("The report itself, in plain words: what you tried, what happened, and what you expected or needed."),
       type: z
         .enum(["bug", "friction", "feature_request"])
         .optional()
-        .describe("Kind of report: a tool gave a wrong result (bug), worked but was confusing or slow (friction), or a capability is missing (feature_request). Omit to file it as friction."),
+        .describe("How the team should triage it: bug when a tool gave a wrong result, friction when it worked but was confusing or slow, feature_request when something is missing. Omit to file it as friction."),
     },
     async (args) => {
       if (!api) return signIn();
@@ -476,8 +568,10 @@ export function createMcpServer(input: {
       const listed = (await api.get("/v1/inboxes?limit=50")) as {
         data: Array<{ id: string; address: string; displayName?: string | null }>;
       };
-      return text(formatInboxes(listed.data ?? []));
+      const rows = listed.data ?? [];
+      return data(formatInboxes(rows), { inboxes: rows.map(inboxData) });
     },
+    { inboxes: z.array(INBOX_OUT) },
   );
 
   add(
@@ -498,8 +592,9 @@ export function createMcpServer(input: {
         address: string;
         displayName?: string | null;
       };
-      return text(formatInbox(inbox));
+      return data(formatInbox(inbox), inboxData(inbox));
     },
+    INBOX_OUT.shape,
   );
 
   add(
@@ -526,8 +621,9 @@ export function createMcpServer(input: {
         domain: args.domain,
         ...(podId ? { podId } : {}),
       })) as { id: string; address: string; displayName?: string | null };
-      return text(formatInbox(inbox));
+      return data(formatInbox(inbox), inboxData(inbox));
     },
+    INBOX_OUT.shape,
   );
 
   add(
@@ -590,9 +686,18 @@ export function createMcpServer(input: {
       const from = inbox.defaulted
         ? `\nfrom: ${inbox.address || inbox.id} (default inbox — pass inbox_id to send from another)`
         : "";
-      return text(
-        `Sent to ${args.to}${from}${sent.threadId ? `\nthread: ${sent.threadId}` : ""}`,
-      );
+      return data(`Sent to ${args.to}${from}${sent.threadId ? `\nthread: ${sent.threadId}` : ""}`, {
+        to: String(args.to),
+        inboxId: inbox.id,
+        threadId: sent.threadId ?? null,
+        messageId: sent.id ?? null,
+      });
+    },
+    {
+      to: z.string(),
+      inboxId: z.string().describe("Inbox the email was sent from."),
+      threadId: z.string().nullable().describe("New thread id; pass it to reply_to_thread for follow-ups."),
+      messageId: z.string().nullable(),
     },
   );
 
@@ -624,13 +729,24 @@ export function createMcpServer(input: {
         messages.find((m) => m.direction === "inbound")?.fromAddr ??
         messages.find((m) => m.direction === "outbound" && m.toAddr)?.toAddr;
       if (!to) return text("There's no one to reply to in this thread yet. Start a new email instead.", true);
-      await api.post(`/v1/inboxes/${thread.inboxId}/send`, {
+      const sent = (await api.post(`/v1/inboxes/${thread.inboxId}/send`, {
         to,
         body: args.body,
         threadId: args.thread_id,
         ...copies(args),
+      })) as { id?: string };
+      return data(`Replied on thread ${args.thread_id}`, {
+        threadId: String(args.thread_id),
+        to,
+        inboxId: thread.inboxId,
+        messageId: sent?.id ?? null,
       });
-      return text(`Replied on thread ${args.thread_id}`);
+    },
+    {
+      threadId: z.string(),
+      to: z.string().describe("Address the reply went to."),
+      inboxId: z.string().describe("Inbox the reply was sent from."),
+      messageId: z.string().nullable(),
     },
   );
 
@@ -649,7 +765,7 @@ export function createMcpServer(input: {
         .number()
         .int()
         .optional()
-        .describe(`How many unread threads to check. Values above ${UNREAD_MAX} are treated as ${UNREAD_MAX}. Omit to check 10.`),
+        .describe(`How many unread threads to look at in one call. Each costs an extra read, so at most ${UNREAD_MAX} are checked even if you ask for more. Omit to check 10.`),
     },
     async (args) => {
       if (!api) return signIn();
@@ -679,7 +795,26 @@ export function createMcpServer(input: {
       }
       // Only name the inbox when we picked it: an explicit inbox_id or a
       // locked key already tells the caller where it looked.
-      return text(formatThreads(rows, inbox.defaulted ? inbox : undefined));
+      return data(formatThreads(rows, inbox.defaulted ? inbox : undefined), {
+        inboxId: inbox.id,
+        threads: rows.map((r) => ({
+          id: r.id,
+          subject: r.subject ?? null,
+          from: r.from ?? null,
+          lastMessageAt: r.lastMessageAt ?? null,
+        })),
+      });
+    },
+    {
+      inboxId: z.string().describe("Inbox that was checked."),
+      threads: z.array(
+        z.object({
+          id: z.string().describe("Thread id for read_thread and reply_to_thread."),
+          subject: z.string().nullable(),
+          from: z.string().nullable().describe("Latest inbound sender."),
+          lastMessageAt: z.string().nullable(),
+        }),
+      ),
     },
   );
 
@@ -736,7 +871,7 @@ export function createMcpServer(input: {
       query: z.string().describe("Words to look for in the subject, body, sender, or recipient. A message matches only if it contains every word; case is ignored."),
       inbox_id: INBOX_ID,
       direction: z.enum(["inbound", "outbound"]).optional().describe("Restrict results to mail this inbox received (inbound) or sent (outbound). Omit to search both."),
-      limit: z.number().int().optional().describe(`How many matching messages to return. Values above ${SEARCH_MAX} are treated as ${SEARCH_MAX}. Omit for 10.`),
+      limit: z.number().int().optional().describe(`How many matches to show. Searching stops once this many are found, and at most ${SEARCH_MAX} are shown per call. Omit for 10.`),
     },
     async (args) => {
       if (!api) return signIn();
@@ -765,7 +900,36 @@ export function createMcpServer(input: {
         }
         if (rows.length < 100) break;
       }
-      return text(formatSearch(hits, { query: String(args.query), scanned, total, inbox: inbox.defaulted ? inbox : undefined }));
+      return data(formatSearch(hits, { query: String(args.query), scanned, total, inbox: inbox.defaulted ? inbox : undefined }), {
+        inboxId: inbox.id,
+        scanned,
+        total,
+        matches: hits.map((m) => ({
+          messageId: m.id,
+          threadId: m.threadId,
+          direction: m.direction,
+          from: m.fromAddr,
+          to: m.toAddr ?? null,
+          subject: m.subject ?? null,
+          createdAt: m.createdAt ?? null,
+        })),
+      });
+    },
+    {
+      inboxId: z.string().describe("Inbox that was searched."),
+      scanned: z.number().describe("Messages checked, newest first."),
+      total: z.number().describe("Messages in the inbox; more than scanned means older mail was not searched."),
+      matches: z.array(
+        z.object({
+          messageId: z.string(),
+          threadId: z.string().describe("Pass to read_thread for the full message."),
+          direction: z.string().describe("inbound (received) or outbound (sent)."),
+          from: z.string(),
+          to: z.string().nullable(),
+          subject: z.string().nullable(),
+          createdAt: z.string().nullable(),
+        }),
+      ),
     },
   );
 
@@ -822,9 +986,20 @@ export function createMcpServer(input: {
         subject: /^fwd?:/i.test(subject) ? subject : `Fwd: ${subject}`.trim(),
         body,
         ...copies(args),
-      })) as { threadId?: string };
+      })) as { id?: string; threadId?: string };
       const note = files.length ? `\nAttachments were not forwarded: ${files.join(", ")}` : "";
-      return text(`Forwarded ${msg.id} to ${args.to}${sent.threadId ? `\nthread: ${sent.threadId}` : ""}${note}`);
+      return data(`Forwarded ${msg.id} to ${args.to}${sent.threadId ? `\nthread: ${sent.threadId}` : ""}${note}`, {
+        forwardedMessageId: msg.id,
+        to: String(args.to),
+        threadId: sent.threadId ?? null,
+        skippedAttachments: files,
+      });
+    },
+    {
+      forwardedMessageId: z.string(),
+      to: z.string(),
+      threadId: z.string().nullable().describe("The new thread the forward started."),
+      skippedAttachments: z.array(z.string()).describe("Attachment filenames that were not included."),
     },
   );
 
@@ -962,13 +1137,18 @@ export function createMcpServer(input: {
     async () => {
       if (!api) return signIn();
       const rows = await listDomains(api);
-      if (rows.length === 0) return text("No custom domains.");
-      return text(
+      const structured = {
+        domains: rows.map((d) => ({ id: d.id, domain: d.domain, status: d.status, podId: d.podId ?? null })),
+      };
+      if (rows.length === 0) return data("No custom domains.", structured);
+      return data(
         rows
           .map((d) => `- ${d.domain} (${d.status}) id: ${d.id}${d.podId ? ` pod: ${d.podId}` : ""}`)
           .join("\n"),
+        structured,
       );
     },
+    { domains: z.array(DOMAIN_ROW_OUT) },
   );
 
   add(
@@ -995,8 +1175,9 @@ export function createMcpServer(input: {
           priority?: number | null;
         }>;
       };
-      return text(formatDns(domain));
+      return data(formatDns(domain), dnsData(domain));
     },
+    DNS_OUT,
   );
 
   add(
@@ -1029,8 +1210,9 @@ export function createMcpServer(input: {
         }>;
       };
       const idLine = domain.id ? `\n\ndomain id: ${domain.id}` : "";
-      return text(`${formatDns(domain)}${idLine}`);
+      return data(`${formatDns(domain)}${idLine}`, dnsData(domain));
     },
+    DNS_OUT,
   );
 
   add(
@@ -1057,8 +1239,9 @@ export function createMcpServer(input: {
           priority?: number | null;
         }>;
       };
-      return text(formatDns(domain));
+      return data(formatDns(domain), dnsData(domain));
     },
+    DNS_OUT,
   );
 
   return server;

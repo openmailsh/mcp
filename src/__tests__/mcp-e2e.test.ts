@@ -537,6 +537,50 @@ describe("mailbox tools", () => {
     }
   });
 
+  it("data tools declare an outputSchema and return matching structuredContent; prose tools stay text", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const { tools } = await client.listTools();
+    const withSchema = tools.filter((t) => t.outputSchema).map((t) => t.name).sort();
+    expect(withSchema).toEqual(
+      [
+        "add_domain", "auth_me", "create_inbox", "forward_message", "get_domain", "get_inbox", "list_domains",
+        "list_inboxes", "list_unread_threads", "reply_to_thread", "search_mail", "send_email", "verify_domain",
+      ].sort(),
+    );
+    // The SDK client validates structuredContent against the declared schema and throws on mismatch.
+    const structured = async (name: string, args: Record<string, unknown> = {}) => {
+      const r = await client.callTool({ name, arguments: args });
+      expect(r.isError, `${name}: ${JSON.stringify(r.content)}`).toBeFalsy();
+      expect((r.content as Array<{ type: string }>)[0].type, name).toBe("text");
+      return r.structuredContent as Record<string, unknown>;
+    };
+    expect(await structured("auth_me")).toMatchObject({ customerId: "cust-1", apiKeyScope: "account", lockedInboxId: null });
+    expect(await structured("list_inboxes")).toMatchObject({ inboxes: [{ id: "inbox-a", address: "a@omail.sh", displayName: "A" }, { id: "inbox-b" }] });
+    expect(await structured("get_inbox", { inbox_id: "inbox-b" })).toEqual({ id: "inbox-b", address: "b@omail.sh", displayName: "B" });
+    expect((await structured("list_unread_threads", { inbox_id: "inbox-a" })).threads).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "thread-a1", from: "human@example.com" })]),
+    );
+    expect(await structured("search_mail", { inbox_id: "inbox-a", query: "invoice" })).toMatchObject({
+      inboxId: "inbox-a",
+      matches: [expect.objectContaining({ threadId: "thread-a1", messageId: "msg-a1" })],
+    });
+    expect(await structured("send_email", { to: "x@example.com", subject: "Hi", body: "Hello", inbox_id: "inbox-a" })).toMatchObject({ to: "x@example.com", inboxId: "inbox-a" });
+    expect(await structured("reply_to_thread", { thread_id: "thread-a1", body: "Hi" })).toMatchObject({ threadId: "thread-a1", to: "human@example.com", inboxId: "inbox-a" });
+    expect(await structured("forward_message", { thread_id: "thread-a1", to: "boss@example.com" })).toMatchObject({ forwardedMessageId: "msg-a1", skippedAttachments: ["invoice.pdf"] });
+    expect(await structured("create_inbox", { mailboxName: "new" })).toHaveProperty("address");
+    const domains = (await structured("list_domains")).domains as Array<{ id: string }>;
+    expect(Array.isArray(domains)).toBe(true);
+    if (domains[0]) {
+      expect(await structured("get_domain", { domain_id: domains[0].id })).toHaveProperty("records");
+      expect(await structured("verify_domain", { domain_id: domains[0].id })).toHaveProperty("status");
+    }
+    expect(await structured("add_domain", { domain: "mail.newco.example" })).toHaveProperty("records");
+    // Content tools: the markdown is the product; no structured copy of mail or keys.
+    for (const name of ["read_thread", "get_attachment_text", "mint_inbox_key", "setup_agent_email", "search_docs", "get_docs"]) {
+      expect(tools.find((t) => t.name === name)?.outputSchema, name).toBeUndefined();
+    }
+  });
+
   it("initialize advertises title, website, icon, and instructions", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     const info = client.getServerVersion();
