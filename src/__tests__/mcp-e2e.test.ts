@@ -222,7 +222,7 @@ describe("tools/list", () => {
     expect(await toolNames(client)).toEqual(
       sorted([
         "search_docs", "get_docs", "auth_me", "send_mcp_feedback",
-        "get_inbox", "list_unread_threads", "read_thread", "get_attachment_text", "search_mail",
+        "get_inbox", "list_unread_threads", "list_recent_threads", "read_thread", "get_attachment_text", "search_mail",
         "mark_thread_read", "send_email", "reply_to_thread", "forward_message",
       ]),
     );
@@ -452,6 +452,22 @@ describe("mailbox tools", () => {
     await call(client, "list_unread_threads");
     expect(api.calls("GET", /^\/v1\/inboxes\?limit=1$/)).toHaveLength(1);
     expect(api.calls("GET", /^\/v1\/inboxes\/inbox-a\/threads/)).toHaveLength(1);
+  });
+
+  it("list_recent_threads includes machine mail that list_unread_threads hides", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "list_recent_threads", { inbox_id: "inbox-a" });
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("Invoice question");
+    expect(result.text).toContain("Weekly newsletter");
+    expect(result.text).toContain("autoReplyable: no");
+    expect(api.calls("GET", /^\/v1\/inboxes\/inbox-a\/threads\?limit=5$/)).toHaveLength(1);
+  });
+
+  it("list_recent_threads with unread_only filters on isRead", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    await call(client, "list_recent_threads", { inbox_id: "inbox-a", unread_only: true });
+    expect(api.calls("GET", /^\/v1\/inboxes\/inbox-a\/threads\?limit=5&isRead=false$/)).toHaveLength(1);
   });
 
   it("read_thread renders the conversation with its autoReplyable flags", async () => {

@@ -246,6 +246,7 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   list_domains: read("List domains"),
   get_domain: read("Show domain DNS"),
   search_mail: read("Search mail"),
+  list_recent_threads: read("List recent mail"),
   // Creates something new; running it twice creates two. Not destructive.
   send_mcp_feedback: hints("Send feedback to OpenMail", false, false, false, false),
   setup_agent_email: hints("Set up agent inbox", false, false, false, false),
@@ -271,6 +272,7 @@ export const SERVER_INSTRUCTIONS = [
   "OpenMail gives the agent its own email inboxes.",
   "Start with auth_me to see which credential and inbox you have. No inbox yet: setup_agent_email (plan first, then execute=true).",
   "Mailbox loop: list_unread_threads → read_thread → reply_to_thread → mark_thread_read. Only reply to messages marked autoReplyable: yes.",
+  "For the latest or most recent email, or mail like codes and receipts, use list_recent_threads; list_unread_threads hides machine mail.",
   "Use reply_to_thread for replies and send_email only for new conversations. Pass inbox_id when the account has more than one inbox (list_inboxes).",
   "Never invent From addresses or paste API keys into chat. Custom domains: add_domain → user publishes DNS → verify_domain.",
   "Unsure how something works: search_docs, then get_docs.",
@@ -680,6 +682,53 @@ export function createMcpServer(input: {
       // Only name the inbox when we picked it: an explicit inbox_id or a
       // locked key already tells the caller where it looked.
       return text(formatThreads(rows, inbox.defaulted ? inbox : undefined));
+    },
+  );
+
+  add(
+    "list_recent_threads",
+    toolDesc({
+      purpose: "Newest threads in one inbox, read or unread, including machine mail such as verification codes, receipts, and newsletters.",
+      notFor: "Deciding what to reply to (use list_unread_threads, which hides machine mail).",
+      when: "The user asks for their latest, newest, or most recent email, or any mail regardless of who sent it.",
+      triggers: "my last email, latest email, newest message, what came in, recent mail, did I get a code",
+      returns: "Each thread's subject, latest inbound sender, read or unread, time, autoReplyable flag, and thread id.",
+    }),
+    {
+      inbox_id: INBOX_ID,
+      unread_only: z.boolean().optional().describe("Only unread threads. Omit to include read ones."),
+      limit: z
+        .number()
+        .int()
+        .optional()
+        .describe(`How many threads to return, newest first. Values above ${UNREAD_MAX} are treated as ${UNREAD_MAX}. Omit for 5.`),
+    },
+    async (args) => {
+      if (!api) return signIn();
+      const inbox = await resolveInbox(ctx, api, args.inbox_id as string | undefined);
+      const limit = Math.min(UNREAD_MAX, Math.max(1, Number(args.limit ?? 5) || 5));
+      const params = new URLSearchParams({ limit: String(limit) });
+      if (args.unread_only) params.set("isRead", "false");
+      const listed = (await api.get(`/v1/inboxes/${inbox.id}/threads?${params}`)) as {
+        data: Array<{ id: string; subject: string | null; isRead: boolean; lastMessageAt: string }>;
+      };
+      const scope = inbox.address || inbox.id;
+      const threads = listed.data ?? [];
+      if (threads.length === 0) {
+        return text(`No ${args.unread_only ? "unread " : ""}threads in ${scope}.`);
+      }
+      const lines = [`Newest ${args.unread_only ? "unread " : ""}threads in ${scope}:`];
+      for (const thread of threads) {
+        const full = await loadThread(ctx, api, thread.id);
+        const inbound = [...(full.data ?? [])].reverse().find((m) => m.direction === "inbound");
+        const from = inbound?.fromAddr ? ` from ${inbound.fromAddr}` : "";
+        const state = thread.isRead ? "read" : "unread";
+        const reply = inbound ? `, autoReplyable: ${inbound.autoReplyable === false ? "no" : "yes"}` : "";
+        lines.push(
+          `- ${thread.subject || "(no subject)"}${from}\n  ${state}, ${thread.lastMessageAt}${reply}\n  thread: ${thread.id}`,
+        );
+      }
+      return text(lines.join("\n"));
     },
   );
 
