@@ -21,6 +21,7 @@
     "category": "Productivity",
     "capabilities": ["Read", "Write"],
     "websiteURL": "https://openmail.sh",
+    "supportURL": "https://docs.openmail.sh/integrations/mcp",
     "privacyPolicyURL": "https://openmail.sh/privacy",
     "termsOfServiceURL": "https://openmail.sh/terms",
     "defaultPrompt": [
@@ -83,6 +84,9 @@
           ]
         },
         "commerce": false
+      },
+      "publication": {
+        "release_notes": "First release: read mail that needs a reply, reply in-thread, send new mail, find verification codes, create inboxes and manage custom domains."
       }
     }
   }
