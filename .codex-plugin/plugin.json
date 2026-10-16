@@ -1,0 +1,34 @@
+{
+  "name": "openmail",
+  "version": "1.0.0",
+  "description": "Gmail for agents. Give the agent its own inbox: read mail that wants a reply, reply in-thread, send new mail, manage custom domains.",
+  "author": {
+    "name": "OpenMail",
+    "email": "support@openmail.sh",
+    "url": "https://openmail.sh"
+  },
+  "homepage": "https://docs.openmail.sh/integrations/mcp",
+  "repository": "https://github.com/openmailsh/mcp",
+  "license": "MIT",
+  "keywords": ["email", "inbox", "mail", "send email", "reply", "verification code", "custom domain"],
+  "skills": "./skills/",
+  "mcpServers": "./mcp.json",
+  "interface": {
+    "displayName": "OpenMail",
+    "shortDescription": "Email inboxes for AI agents",
+    "longDescription": "Give your agent its own email address. Read mail that needs a reply, reply in-thread, send new mail, receive verification codes and magic links, and manage custom domains, all through natural language.",
+    "developerName": "OpenMail",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://openmail.sh",
+    "privacyPolicyURL": "https://openmail.sh/privacy",
+    "termsOfServiceURL": "https://openmail.sh/terms",
+    "defaultPrompt": [
+      "Check my OpenMail inbox and summarise threads that need a reply.",
+      "Set up an email address for my agent.",
+      "Email support@acme.com asking about their API rate limits."
+    ],
+    "composerIcon": "./assets/logo.png",
+    "logo": "./assets/logo.png"
+  }
+}

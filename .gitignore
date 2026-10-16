@@ -7,3 +7,4 @@ dist/
 # MCP Registry DNS-auth private key, never committed
 key.pem
 *.pem
+openmail-openai-plugin.zip
