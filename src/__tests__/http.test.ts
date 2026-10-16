@@ -37,6 +37,13 @@ describe("hosted MCP http", () => {
     expect(res.text).toBe("TC5aZS0XkGJ9ecnhNE5mmzooru7PPsLPBnililVHOjE");
   });
 
+  it("rate-limits anonymous /mcp calls per IP", async () => {
+    const app = createApp();
+    let last = 0;
+    for (let i = 0; i < 61; i++) last = (await request(app).get("/mcp")).status;
+    expect(last).toBe(429);
+  });
+
   it("canonicalizes MCP_RESOURCE_URL with a /mcp suffix", async () => {
     const previous = process.env.MCP_RESOURCE_URL;
     process.env.MCP_RESOURCE_URL = "https://mcp.openmail.sh/mcp/";

@@ -1,4 +1,6 @@
 import express from "express";
+import crypto from "node:crypto";
+import { rateLimit, ipKeyGenerator } from "express-rate-limit";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpServer } from "./server.js";
 import { instrumentServer } from "./analytics.js";
@@ -158,6 +160,9 @@ async function resolveAuth(token: string | null): Promise<ResolvedAuth> {
 
 export function createApp(): express.Express {
   const app = express();
+  // Railway's edge proxy sets X-Forwarded-For; trust that one hop so
+  // req.ip is the caller, not the proxy.
+  app.set("trust proxy", 1);
   app.use(express.json({ limit: "4mb" }));
   app.use((req, res, next) => {
     cors(res);
@@ -166,6 +171,29 @@ export function createApp(): express.Express {
       return;
     }
     next();
+  });
+
+  // Keyed by credential, not IP: ChatGPT and Codex call from shared OpenAI
+  // egress IPs, so a per-IP limit would throttle every user at once. The
+  // hash keeps raw tokens out of the limiter's memory. Anonymous requests
+  // fall back to IP. Generous: an agent loop is a few calls a minute.
+  const mcpLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: (req) => (bearerToken(req) ? 300 : 60),
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+      const token = bearerToken(req);
+      return token
+        ? `t:${crypto.createHash("sha256").update(token).digest("hex")}`
+        : `ip:${ipKeyGenerator(req.ip ?? "")}`;
+    },
+    handler: (_req, res) => {
+      res.status(429).json({
+        error: "rate_limited",
+        message: "Too many requests to the OpenMail MCP. Wait a minute and retry.",
+      });
+    },
   });
 
   app.get("/health", (_req, res) => {
@@ -199,7 +227,7 @@ export function createApp(): express.Express {
   // token that probe must get the 401 + WWW-Authenticate challenge, or they
   // never find the protected-resource metadata and guess at OAuth on this
   // origin. The install text stays as the body for people opening the URL.
-  app.get("/mcp", (req, res) => {
+  app.get("/mcp", mcpLimiter, (req, res) => {
     if (!bearerToken(req)) {
       res.setHeader("WWW-Authenticate", wwwAuthenticate());
       res.status(401);
@@ -278,8 +306,8 @@ export function createApp(): express.Express {
     "/mcp/inbox/:inboxId",
     "/inbox/:inboxId",
   ]) {
-    app.post(path, handleMcp);
-    app.delete(path, handleMcp);
+    app.post(path, mcpLimiter, handleMcp);
+    app.delete(path, mcpLimiter, handleMcp);
   }
 
   return app;
