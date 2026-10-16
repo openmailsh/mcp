@@ -83,7 +83,8 @@
             }
           ]
         },
-        "commerce": false
+        "commerce": false,
+        "demo_recording_url": "https://cap.so/s/dr8c8qwkc8gbtz3"
       },
       "publication": {
         "release_notes": "First release: read mail that needs a reply, reply in-thread, send new mail, search mail, create inboxes and manage custom domains."
