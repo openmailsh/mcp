@@ -7,6 +7,7 @@ import { instrumentServer } from "./analytics.js";
 import { ApiError, createOpenMailApi, type MeResponse } from "./openmail.js";
 import { INSTALL_MARKDOWN } from "./format.js";
 import { verifyMcpAccessToken, mcpIssuer, mcpResource } from "./jwt.js";
+import { fetchAuthServerMetadata } from "./as-metadata.js";
 import {
   looksLikeApiKey,
   looksLikeJwt,
@@ -213,11 +214,21 @@ export function createApp(): express.Express {
     /^\/\.well-known\/oauth-protected-resource(\/.*)?$/,
     wellKnown,
   );
-  // No /.well-known/oauth-authorization-server here. The authorization server
-  // is api.openmail.sh, advertised through oauth-protected-resource above.
-  // Serving AS metadata on this origin with issuer api.openmail.sh breaks
-  // RFC 8414's issuer check, and Codex/ChatGPT abort sign-in on it. A 404
-  // makes them follow the protected-resource document instead.
+  // Mirror of the issuer's AS metadata for clients that skip RFC 9728 and
+  // fetch this path straight off the MCP host (Composio). PR #28 dropped it
+  // blaming the issuer mismatch for Codex aborting sign-in, but the real fix
+  // there was the 401 challenge on GET /mcp below; AgentMail serves the same
+  // mismatched mirror and Codex/ChatGPT sign in fine. See as-metadata.ts.
+  app.get("/.well-known/oauth-authorization-server", mcpLimiter, async (_req, res) => {
+    try {
+      res.json(await fetchAuthServerMetadata());
+    } catch (error) {
+      console.error("[oauth] authorization-server metadata unavailable:", error);
+      res.status(502).json({
+        error: "authorization server metadata unavailable, retry shortly",
+      });
+    }
+  });
 
   app.get("/", (_req, res) => {
     res.type("text/markdown").send(INSTALL_MARKDOWN);

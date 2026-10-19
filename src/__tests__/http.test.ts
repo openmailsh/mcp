@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { createApp } from "../index";
 
@@ -19,9 +19,22 @@ describe("hosted MCP http", () => {
     expect(probe.headers["www-authenticate"]).toContain("resource_metadata=");
     expect(probe.text).toContain("https://mcp.openmail.sh/mcp");
 
-    // AS metadata lives only on the issuer (api.openmail.sh).
-    const as = await request(app).get("/.well-known/oauth-authorization-server");
-    expect(as.status).toBe(404);
+    // AS metadata is mirrored from the issuer for clients that skip RFC 9728.
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "https://api.openmail.sh/.well-known/oauth-authorization-server") {
+        return Response.json({ issuer: "https://api.openmail.sh", token_endpoint: "https://api.openmail.sh/oauth/token" });
+      }
+      return realFetch(input, init);
+    });
+    try {
+      const as = await request(app).get("/.well-known/oauth-authorization-server");
+      expect(as.status).toBe(200);
+      expect(as.body.issuer).toBe("https://api.openmail.sh");
+      expect(as.body.token_endpoint).toBe("https://api.openmail.sh/oauth/token");
+    } finally {
+      vi.unstubAllGlobals();
+    }
 
     const meta = await request(app).get("/.well-known/oauth-protected-resource");
     expect(meta.status).toBe(200);
