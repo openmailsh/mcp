@@ -219,7 +219,7 @@ export function createApp(): express.Express {
   // blaming the issuer mismatch for Codex aborting sign-in, but the real fix
   // there was the 401 challenge on GET /mcp below; AgentMail serves the same
   // mismatched mirror and Codex/ChatGPT sign in fine. See as-metadata.ts.
-  app.get("/.well-known/oauth-authorization-server", async (_req, res) => {
+  app.get("/.well-known/oauth-authorization-server", mcpLimiter, async (_req, res) => {
     try {
       res.json(await fetchAuthServerMetadata());
     } catch (error) {
