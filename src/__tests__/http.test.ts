@@ -19,6 +19,23 @@ describe("hosted MCP http", () => {
     expect(probe.headers["www-authenticate"]).toContain("resource_metadata=");
     expect(probe.text).toContain("https://mcp.openmail.sh/mcp");
 
+    // Signed in, asking for the server-push stream: stateless server, 405.
+    const stream = await request(app)
+      .get("/mcp")
+      .set("Authorization", "Bearer om_whatever")
+      .set("Accept", "text/event-stream");
+    expect(stream.status).toBe(405);
+    expect(stream.headers.allow).toBe("POST, DELETE");
+    expect(stream.body.error.code).toBe(-32000);
+
+    // Signed in, browser/curl: still the install text.
+    const doc = await request(app)
+      .get("/mcp")
+      .set("Authorization", "Bearer om_whatever")
+      .set("Accept", "*/*");
+    expect(doc.status).toBe(200);
+    expect(doc.type).toBe("text/markdown");
+
     // AS metadata is mirrored from the issuer for clients that skip RFC 9728.
     const realFetch = globalThis.fetch;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
