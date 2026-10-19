@@ -238,10 +238,23 @@ export function createApp(): express.Express {
   // token that probe must get the 401 + WWW-Authenticate challenge, or they
   // never find the protected-resource metadata and guess at OAuth on this
   // origin. The install text stays as the body for people opening the URL.
+  //
+  // Once signed in, Streamable HTTP clients GET /mcp with
+  // `Accept: text/event-stream` to open a server-push stream. This server is
+  // stateless and has none, so per the spec that gets a 405; markdown there
+  // makes Codex log "Unexpected content type" on every connect.
   app.get("/mcp", mcpLimiter, (req, res) => {
     if (!bearerToken(req)) {
       res.setHeader("WWW-Authenticate", wwwAuthenticate());
       res.status(401);
+    } else if (req.accepts(["text/markdown", "text/event-stream"]) === "text/event-stream") {
+      res.setHeader("Allow", "POST, DELETE");
+      res.status(405).json({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Method Not Allowed: stateless server, no GET stream" },
+        id: null,
+      });
+      return;
     }
     res.type("text/markdown").send(INSTALL_MARKDOWN);
   });
