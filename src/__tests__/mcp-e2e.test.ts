@@ -438,6 +438,16 @@ describe("mailbox tools", () => {
     });
   });
 
+  it("send_email forwards unsubscribe only when true", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    await call(client, "send_email", { to: "x@example.com", subject: "s", body: "b", inbox_id: "inbox-a", unsubscribe: true });
+    await call(client, "send_email", { to: "x@example.com", subject: "s", body: "b", inbox_id: "inbox-a", unsubscribe: false });
+
+    const sends = api.calls("POST", /\/send$/);
+    expect(sends[0].body).toEqual({ to: "x@example.com", subject: "s", body: "b", unsubscribe: true });
+    expect(sends[1].body).toEqual({ to: "x@example.com", subject: "s", body: "b" });
+  });
+
   it("list_unread_threads lists machine mail too, flagged autoReplyable: no", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     const result = await call(client, "list_unread_threads", { inbox_id: "inbox-a" });
