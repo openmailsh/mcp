@@ -575,7 +575,7 @@ export function createMcpServer(input: {
         .boolean()
         .optional()
         .describe(
-          "Set true for cold outreach. Adds one-click unsubscribe headers (Gmail/Outlook show an Unsubscribe button) and fills {{unsubscribe_url}} in the body. A click suppresses the recipient account-wide. Only works with no cc or bcc.",
+          "Set true for cold outreach. Adds one-click unsubscribe headers (Gmail/Outlook show an Unsubscribe button) and fills {{unsubscribe_url}} in the body. A click suppresses the recipient account-wide. Only works with no cc or bcc. Automatic on shared OpenMail domains for new single-recipient emails.",
         ),
       headers: z
         .record(z.string(), z.string())
