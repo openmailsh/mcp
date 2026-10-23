@@ -448,6 +448,17 @@ describe("mailbox tools", () => {
     expect(sends[1].body).toEqual({ to: "x@example.com", subject: "s", body: "b" });
   });
 
+  it("send_email forwards custom headers when given", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const headers = { "List-Unsubscribe": "<https://x.test/u/1>" };
+    await call(client, "send_email", { to: "x@example.com", subject: "s", body: "b", inbox_id: "inbox-a", headers });
+    await call(client, "send_email", { to: "x@example.com", subject: "s", body: "b", inbox_id: "inbox-a", headers: {} });
+
+    const sends = api.calls("POST", /\/send$/);
+    expect(sends[0].body).toEqual({ to: "x@example.com", subject: "s", body: "b", headers });
+    expect(sends[1].body).toEqual({ to: "x@example.com", subject: "s", body: "b" });
+  });
+
   it("list_unread_threads lists machine mail too, flagged autoReplyable: no", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     const result = await call(client, "list_unread_threads", { inbox_id: "inbox-a" });
