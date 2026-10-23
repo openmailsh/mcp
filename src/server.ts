@@ -571,6 +571,18 @@ export function createMcpServer(input: {
       body: z.string().describe("Plain-text message body."),
       cc: CC_SCHEMA,
       bcc: BCC_SCHEMA,
+      unsubscribe: z
+        .boolean()
+        .optional()
+        .describe(
+          "Set true for cold outreach. Adds one-click unsubscribe headers (Gmail/Outlook show an Unsubscribe button) and fills {{unsubscribe_url}} in the body. A click suppresses the recipient account-wide. Only works with no cc or bcc. Automatic on shared OpenMail domains for new single-recipient emails.",
+        ),
+      headers: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe(
+          "Optional custom email headers, name to value, e.g. {\"List-Unsubscribe\": \"<https://example.com/u/1>\"} to use your own unsubscribe link. Max 20. Sender, recipient, subject, threading and Content-* headers are rejected; use the matching fields. Don't combine List-Unsubscribe with unsubscribe: true.",
+        ),
       inbox_id: z
         .string()
         .optional()
@@ -584,6 +596,8 @@ export function createMcpServer(input: {
         subject: args.subject,
         body: args.body,
         ...copies(args),
+        ...(args.unsubscribe ? { unsubscribe: true } : {}),
+        ...(args.headers && Object.keys(args.headers).length ? { headers: args.headers } : {}),
       })) as { id?: string; threadId?: string; from?: string };
       // Say which address the mail left from when we chose it: the agent
       // (and the person reading the transcript) should never have to guess.
