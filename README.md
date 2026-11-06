@@ -35,7 +35,9 @@ Keys and transcripts: over OAuth (Claude, Cursor sign-in) `setup_agent_email` an
 
 ## Drafts
 
-Use `create_draft` to save an unsent email, then `list_drafts` and `get_draft` to review it. Recipient, subject and body are optional. Draft creation requires OAuth `send` scope (or an API key) and is unavailable on read-only connections. Reading drafts is available on read-only connections. Inbox locks apply to every draft tool. Saving a draft never sends it; the console Drafts folder only displays drafts.
+Use `create_draft` to save an unsent email, then `list_drafts` and `get_draft` to review it. Recipient, subject and body are optional. Draft creation requires OAuth `send` scope (or an API key) and is unavailable on read-only connections. Reading drafts is available on read-only connections. Inbox locks apply to every draft tool. Saving a draft never sends it; the console can edit recipients and send drafts.
+
+To send a saved draft, read it with `get_draft`, then call `send_draft` with its `draft_id` and exact `updated_at`. Sending requires the user’s instruction and OAuth `send` scope (or an API key). Read-only connections cannot send. Stale versions must be reviewed again; failed sends retain the draft.
 
 ## Env
 

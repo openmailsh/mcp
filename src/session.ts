@@ -26,6 +26,7 @@ export const ALL_TOOLS = [
   "mint_inbox_key",
   "send_email",
   "create_draft",
+  "send_draft",
   "list_drafts",
   "get_draft",
   "reply_to_thread",
@@ -113,7 +114,7 @@ export function visibleTools(ctx: SessionContext): ToolName[] {
     // Marking read is a write (PATCH /v1/threads/:id); readonly sessions get none.
     if (!ctx.readonly) tools.push("mark_thread_read");
     if (!ctx.readonly && hasScope(ctx, "send")) {
-      tools.push("send_email", "reply_to_thread", "forward_message", "create_draft");
+      tools.push("send_email", "reply_to_thread", "forward_message", "create_draft", "send_draft");
     }
     // The API refuses these to OAuth tokens (no consent scope covers them)
     // and to scoped keys, so only list them where they can succeed.

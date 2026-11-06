@@ -244,6 +244,7 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   get_inbox: read("Show inbox"),
   list_drafts: read("List email drafts"),
   get_draft: read("Read email draft"),
+  send_draft: hints("Send saved draft", false, true, true, true),
   create_draft: hints("Save email draft", false, false, false, false),
   list_unread_threads: read("List unread threads"),
   read_thread: read("Read thread"),
@@ -278,7 +279,7 @@ export const SERVER_INSTRUCTIONS = [
   "Mailbox loop: list_unread_threads → read_thread → reply_to_thread → mark_thread_read. It lists machine mail too; only reply to threads marked autoReplyable: yes.",
   "For the latest or most recent email, call list_unread_threads with include_read: true. It lists machine mail too, flagged autoReplyable: no.",
   "Use reply_to_thread for replies and send_email only for new conversations. Pass inbox_id when the account has more than one inbox (list_inboxes).",
-  "Use create_draft to save an unsent email for review. list_drafts and get_draft retrieve drafts; the console Drafts folder is read-only. Saving a draft never sends email.",
+  "Use create_draft to save an unsent email for review. list_drafts and get_draft retrieve drafts. Use send_draft with the reviewed draft updated_at when the user asks to send it. Saving a draft never sends email.",
   "Never invent From addresses or paste API keys into chat. Custom domains: add_domain → user publishes DNS → verify_domain.",
   "Unsure how something works: search_docs, then get_docs.",
 ].join("\n");
@@ -641,6 +642,30 @@ export function createMcpServer(input: {
       const draft = (await api.get(`/v1/inboxes/${encodeURIComponent(inboxId)}/drafts/${encodeURIComponent(String(args.draft_id))}`)) as Draft;
       assertLockedInbox(ctx, draft.inboxId);
       return text(formatDraft(draft));
+    },
+  );
+
+  add(
+    "send_draft",
+    toolDesc({
+      purpose: "Send a saved email draft using its stored recipients and content, then remove it from Drafts on success.",
+      notFor: "Saving or editing a draft, or sending without the user's instruction.",
+      when: "The user asks to send a saved draft you have reviewed with get_draft.",
+      triggers: "send this draft, send the saved email",
+      returns: "Sent message and thread ids. Failed sends retain the draft. A changed draft must be reviewed again.",
+    }),
+    {
+      inbox_id: INBOX_ID,
+      draft_id: z.string().min(1).describe("Saved draft id from get_draft."),
+      updated_at: z.string().datetime({ offset: true }).describe("Exact updated_at from get_draft. Read and review the draft before sending; do not substitute a newly fetched version without review."),
+    },
+    async (args) => {
+      if (!api) return signIn();
+      const inboxId = await resolveInboxId(ctx, api, args.inbox_id as string | undefined);
+      const sent = await api.post(`/v1/inboxes/${encodeURIComponent(inboxId)}/drafts/${encodeURIComponent(String(args.draft_id))}/send`, {
+        updatedAt: args.updated_at,
+      }) as { messageId: string; threadId: string; status: string };
+      return text(`Draft sent.\nmessage: ${sent.messageId}\nthread: ${sent.threadId}\nstatus: ${sent.status}`);
     },
   );
 

@@ -135,6 +135,21 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
 
     if (method === "GET" && path === "/v1/inboxes") return json(200, { data: state.inboxes });
 
+    if (method === "POST" && (m = path.match(/^\/v1\/inboxes\/([^/]+)\/drafts\/([^/]+)\/send$/))) {
+      const inboxId = decodeURIComponent(m[1]);
+      const draftId = decodeURIComponent(m[2]);
+      const draft = state.drafts?.find((row) => row.inboxId === inboxId && row.id === draftId);
+      if (!draft) return json(404, { error: "not_found", message: "Draft not found" });
+      if ((body as { updatedAt?: string })?.updatedAt !== draft.updatedAt) {
+        return json(409, { error: "draft_changed", message: "Draft changed. Review it again before sending." });
+      }
+      if (!draft.to || !draft.subject || (!draft.bodyText && !draft.bodyHtml)) {
+        return json(400, { error: "incomplete_draft", message: "Complete the draft before sending." });
+      }
+      state.drafts = state.drafts!.filter((row) => row.id !== draftId);
+      return json(200, { messageId: `msg-${++seq}`, threadId: `thread-${seq}`, status: "sent" });
+    }
+
     if ((m = path.match(/^\/v1\/inboxes\/([^/]+)\/drafts(?:\/([^/]+))?$/))) {
       const inboxId = decodeURIComponent(m[1]);
       const draftId = m[2] ? decodeURIComponent(m[2]) : undefined;

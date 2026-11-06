@@ -65,6 +65,7 @@ describe("visibleTools", () => {
       "mark_thread_read",
       "send_email",
       "create_draft",
+      "send_draft",
       "reply_to_thread",
       "create_inbox",
       "mint_inbox_key",

@@ -162,7 +162,7 @@ async function oauthToken(scope: string) {
 const sorted = (names: readonly string[]) => [...names].sort();
 const without = (names: readonly string[], ...drop: string[]) => sorted(names.filter((n) => !drop.includes(n)));
 
-const WRITE_TOOLS = ["setup_agent_email", "create_draft", "send_email", "reply_to_thread", "forward_message", "mark_thread_read", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain", "update_inbox", "delete_thread", "delete_message"];
+const WRITE_TOOLS = ["setup_agent_email", "create_draft", "send_draft", "send_email", "reply_to_thread", "forward_message", "mark_thread_read", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain", "update_inbox", "delete_thread", "delete_message"];
 /** The API refuses these to every OAuth token, so OAuth sessions never list them. */
 const API_KEY_ONLY = ["update_inbox", "delete_thread", "delete_message"];
 
@@ -223,7 +223,7 @@ describe("tools/list", () => {
       sorted([
         "search_docs", "get_docs", "auth_me", "send_mcp_feedback",
         "get_inbox", "list_unread_threads", "read_thread", "get_attachment_text", "search_mail",
-        "list_drafts", "get_draft", "create_draft",
+        "list_drafts", "get_draft", "create_draft", "send_draft",
         "mark_thread_read", "send_email", "reply_to_thread", "forward_message",
       ]),
     );
@@ -232,7 +232,7 @@ describe("tools/list", () => {
   it("a read-only OAuth token keeps mark_thread_read but loses send, setup, and domain writes", async () => {
     const client = await connect("/mcp", await oauthToken("read"));
     expect(await toolNames(client)).toEqual(
-      without(ALL_TOOLS, "setup_agent_email", "create_draft", "send_email", "reply_to_thread", "forward_message", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain", ...API_KEY_ONLY),
+      without(ALL_TOOLS, "setup_agent_email", "create_draft", "send_draft", "send_email", "reply_to_thread", "forward_message", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain", ...API_KEY_ONLY),
     );
   });
 
@@ -819,9 +819,34 @@ describe("email drafts", () => {
     const read = await call(client, "get_draft", { inbox_id: "inbox-b", draft_id: draft.id });
     expect(read.isError).toBe(false);
     expect(read.text).toContain("Plain proposal");
+    expect(read.text).toContain(`updated_at: ${draft.updatedAt}`);
     expect(read.text).toContain("BCC: private@example.com");
     expect(api.calls("POST", /\/send$/)).toHaveLength(0);
     expect(api.state.threads["thread-b1"].messages).toHaveLength(1);
+  });
+
+  it("sends the reviewed saved version once and removes the draft", async () => {
+    const client = await connect("/mcp", await oauthToken("read send"));
+    await call(client, "create_draft", { inbox_id: "inbox-a", to: "reader@example.com", subject: "Ready", body: "Approved body" });
+    const draft = api.state.drafts![0];
+    const args = { inbox_id: "inbox-a", draft_id: draft.id, updated_at: draft.updatedAt };
+    const result = await call(client, "send_draft", args);
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("Draft sent.");
+    expect(result.text).toContain("status: sent");
+    expect(api.calls("POST", /\/drafts\/[^/]+\/send$/)[0]?.body).toEqual({ updatedAt: draft.updatedAt });
+    expect(api.state.drafts).toHaveLength(0);
+    expect((await call(client, "send_draft", args)).isError).toBe(true);
+  });
+
+  it("retains a changed draft and requires reviewing its current version", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    await call(client, "create_draft", { to: "reader@example.com", subject: "Ready", body: "Approved body" });
+    const draft = api.state.drafts![0];
+    const result = await call(client, "send_draft", { draft_id: draft.id, updated_at: "2020-01-01T00:00:00.000Z" });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("Review it again");
+    expect(api.state.drafts).toEqual([draft]);
   });
 
   it("supports incomplete drafts and defaults to the locked inbox", async () => {
@@ -849,28 +874,32 @@ describe("email drafts", () => {
     expect(next.text).toContain("A & B second");
   });
 
-  it.each(["/mcp/readonly", "/mcp?readonly=true"])("%s can read drafts but cannot create them", async (path) => {
+  it.each(["/mcp/readonly", "/mcp?readonly=true"])("%s can read drafts but cannot create or send them", async (path) => {
     const client = await connect(path, ACCOUNT_KEY);
     const names = await toolNames(client);
     expect(names).toContain("list_drafts");
     expect(names).toContain("get_draft");
     expect(names).not.toContain("create_draft");
+    expect(names).not.toContain("send_draft");
+    expect((await call(client, "send_draft", { draft_id: "draft-1", updated_at: new Date().toISOString() })).isError).toBe(true);
     const result = await call(client, "create_draft", { subject: "Blocked" });
     expect(result.isError).toBe(true);
     expect(api.calls("POST", /drafts$/)).toHaveLength(0);
   });
 
-  it("OAuth requires send scope for saving drafts", async () => {
+  it("OAuth requires send scope for saving and sending drafts", async () => {
     const client = await connect("/mcp", await oauthToken("read"));
     expect(await toolNames(client)).not.toContain("create_draft");
+    expect(await toolNames(client)).not.toContain("send_draft");
+    expect((await call(client, "send_draft", { draft_id: "draft-1", updated_at: new Date().toISOString() })).isError).toBe(true);
     const result = await call(client, "create_draft", { subject: "Blocked" });
     expect(result.isError).toBe(true);
     expect(api.calls("POST", /drafts$/)).toHaveLength(0);
   });
 
-  it.each(["create_draft", "list_drafts", "get_draft"])("%s refuses another inbox before touching its API", async (tool) => {
+  it.each(["create_draft", "list_drafts", "get_draft", "send_draft"])("%s refuses another inbox before touching its API", async (tool) => {
     const client = await connect("/mcp", INBOX_A_KEY);
-    const result = await call(client, tool, { inbox_id: "inbox-b", draft_id: "other-draft" });
+    const result = await call(client, tool, { inbox_id: "inbox-b", draft_id: "other-draft", updated_at: new Date().toISOString() });
     expect(result.isError).toBe(true);
     expect(result.text).toMatch(/doesn't have access/);
     expect(api.requests.filter((request) => request.path.includes("/drafts"))).toHaveLength(0);
@@ -880,6 +909,8 @@ describe("email drafts", () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     expect((await call(client, "create_draft", { to: "not-an-email" })).isError).toBe(true);
     expect((await call(client, "list_drafts", { offset: -1 })).isError).toBe(true);
+    expect((await call(client, "send_draft", { draft_id: "draft-1" })).isError).toBe(true);
+    expect((await call(client, "send_draft", { draft_id: "draft-1", updated_at: "invalid" })).isError).toBe(true);
     expect((await call(client, "list_drafts", { limit: 101 })).isError).toBe(true);
     expect(api.requests.filter((request) => request.path.includes("/drafts"))).toHaveLength(0);
   });
@@ -889,6 +920,9 @@ describe("email drafts", () => {
     const { tools } = await client.listTools();
     expect(tools.find((tool) => tool.name === "create_draft")?.annotations).toMatchObject({
       readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false,
+    });
+    expect(tools.find((tool) => tool.name === "send_draft")?.annotations).toMatchObject({
+      readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true,
     });
     for (const name of ["list_drafts", "get_draft"]) {
       expect(tools.find((tool) => tool.name === name)?.annotations?.readOnlyHint).toBe(true);

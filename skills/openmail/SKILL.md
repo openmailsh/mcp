@@ -24,7 +24,9 @@ Attachments show a `message:` id under the filename in `read_thread`. Pass that 
 
 ## Drafts
 
-When asked to save or prepare an unsent email, use `create_draft`. Recipient, subject and body may be omitted for incomplete drafts. `list_drafts` finds saved drafts and `get_draft` reads their content. Saving a draft never sends email. The console Drafts folder is read-only. Sending is a separate action and needs the user’s instruction.
+When asked to save or prepare an unsent email, use `create_draft`. Recipient, subject and body may be omitted for incomplete drafts. `list_drafts` finds saved drafts and `get_draft` reads their content. Saving a draft never sends email. The console can edit recipients and send drafts; subject and body remain read-only. Sending is a separate action and needs the user’s instruction.
+
+To send a saved draft, read it with `get_draft`, then call `send_draft` with its `draft_id` and exact `updated_at`. Sending requires the user’s instruction and OAuth `send` scope (or an API key). Read-only connections cannot send. Stale versions must be reviewed again; failed sends retain the draft.
 
 ## Sending
 

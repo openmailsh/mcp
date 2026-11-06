@@ -357,6 +357,7 @@ export function formatDraft(draft: Draft): string {
     ...(draft.cc.length ? [`CC: ${draft.cc.join(", ")}`] : []),
     ...(draft.bcc.length ? [`BCC: ${draft.bcc.join(", ")}`] : []),
     `Updated: ${formatTimestamp(draft.updatedAt)}`,
+    `updated_at: ${draft.updatedAt}`,
     "Status: unsent draft",
     "",
     draft.bodyText || draft.bodyHtml || "(empty body)",
