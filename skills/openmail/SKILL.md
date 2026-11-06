@@ -22,6 +22,10 @@ Before you act on a thread, `read_thread` the whole of it. Replies written from 
 
 Attachments show a `message:` id under the filename in `read_thread`. Pass that id, not the thread id, to `get_attachment_text`. PDF, Office files, and images (OCR) come back as text.
 
+## Drafts
+
+When asked to save or prepare an unsent email, use `create_draft`. Recipient, subject and body may be omitted for incomplete drafts. `list_drafts` finds saved drafts and `get_draft` reads their content. Saving a draft never sends email. The console Drafts folder is read-only. Sending is a separate action and needs the user’s instruction.
+
 ## Sending
 
 Replying to something you received: `reply_to_thread` with the `thread_id`, always. It keeps the headers intact so the recipient's mail client shows one conversation. Starting a conversation that does not exist yet: `send_email` with `to`, `subject`, `body`.

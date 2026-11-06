@@ -40,6 +40,8 @@ const CONTENT_ARGS: ReadonlySet<string> = new Set([
   "bcc",
   "subject",
   "body",
+  "body_html",
+  "bodyHtml",
   "message",
   "mailboxName",
   "displayName",
@@ -50,16 +52,16 @@ const CONTENT_ARGS: ReadonlySet<string> = new Set([
  * JSON-RPC request (`request.params.arguments.body`), not just the arguments,
  * and that shape is not something we should couple to.
  */
-function stripContentKeys(value: unknown): void {
+function stripContentKeys(value: unknown, redactQuery = false): void {
   if (Array.isArray(value)) {
-    for (const item of value) stripContentKeys(item);
+    for (const item of value) stripContentKeys(item, redactQuery);
     return;
   }
   if (!value || typeof value !== "object") return;
   const record = value as Record<string, unknown>;
   for (const key of Object.keys(record)) {
-    if (CONTENT_ARGS.has(key)) delete record[key];
-    else stripContentKeys(record[key]);
+    if (CONTENT_ARGS.has(key) || (redactQuery && key === "query")) delete record[key];
+    else stripContentKeys(record[key], redactQuery);
   }
 }
 
@@ -69,7 +71,7 @@ export const redactMailContent: BeforeSendFn = (event) => {
   if (typeof tool !== "string" || !KEEP_RESPONSE.has(tool)) {
     delete props[PostHogMCPAnalyticsProperty.Response];
   }
-  stripContentKeys(props[PostHogMCPAnalyticsProperty.Parameters]);
+  stripContentKeys(props[PostHogMCPAnalyticsProperty.Parameters], tool === "list_drafts");
   return event;
 };
 

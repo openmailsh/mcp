@@ -33,6 +33,10 @@ Keys and transcripts: over OAuth (Claude, Cursor sign-in) `setup_agent_email` an
 
 **stdio-only clients:** `npx -y mcp-remote https://mcp.openmail.sh/mcp`
 
+## Drafts
+
+Use `create_draft` to save an unsent email, then `list_drafts` and `get_draft` to review it. Recipient, subject and body are optional. Draft creation requires OAuth `send` scope (or an API key) and is unavailable on read-only connections. Reading drafts is available on read-only connections. Inbox locks apply to every draft tool. Saving a draft never sends it; the console Drafts folder only displays drafts.
+
 ## Env
 
 | Name | Purpose |

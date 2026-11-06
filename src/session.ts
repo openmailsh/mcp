@@ -25,6 +25,9 @@ export const ALL_TOOLS = [
   "create_inbox",
   "mint_inbox_key",
   "send_email",
+  "create_draft",
+  "list_drafts",
+  "get_draft",
   "reply_to_thread",
   "list_unread_threads",
   "read_thread",
@@ -106,11 +109,11 @@ export function visibleTools(ctx: SessionContext): ToolName[] {
 
   if (ctx.toolsets.has("mailbox")) {
     if (!inboxLocked) tools.push("list_inboxes");
-    tools.push("get_inbox", "list_unread_threads", "read_thread", "get_attachment_text", "search_mail");
+    tools.push("get_inbox", "list_unread_threads", "read_thread", "get_attachment_text", "search_mail", "list_drafts", "get_draft");
     // Marking read is a write (PATCH /v1/threads/:id); readonly sessions get none.
     if (!ctx.readonly) tools.push("mark_thread_read");
     if (!ctx.readonly && hasScope(ctx, "send")) {
-      tools.push("send_email", "reply_to_thread", "forward_message");
+      tools.push("send_email", "reply_to_thread", "forward_message", "create_draft");
     }
     // The API refuses these to OAuth tokens (no consent scope covers them)
     // and to scoped keys, so only list them where they can succeed.

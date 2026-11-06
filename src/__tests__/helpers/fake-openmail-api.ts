@@ -7,6 +7,7 @@
  */
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import type { Draft } from "../../format.js";
 import type { MeResponse } from "../../openmail.js";
 
 export type FakeMessage = {
@@ -45,6 +46,7 @@ export type FakeState = {
   inboxes: FakeInbox[];
   threads: Record<string, FakeThread>;
   attachments: Record<string, { inboxId: string; text: string }>;
+  drafts?: Draft[];
   /** When set, GET /v1/me answers with this instead of looking the token up (simulates an API outage). */
   meFailure?: { status: number; body?: unknown };
   /** Custom domains. A domain with a podId only accepts inboxes created with that podId. */
@@ -132,6 +134,34 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
     if (method === "GET" && path === "/v1/me") return json(200, me);
 
     if (method === "GET" && path === "/v1/inboxes") return json(200, { data: state.inboxes });
+
+    if ((m = path.match(/^\/v1\/inboxes\/([^/]+)\/drafts(?:\/([^/]+))?$/))) {
+      const inboxId = decodeURIComponent(m[1]);
+      const draftId = m[2] ? decodeURIComponent(m[2]) : undefined;
+      if (!state.inboxes.some((inbox) => inbox.id === inboxId)) return json(404, { error: "not_found", message: "Inbox not found" });
+      const drafts = state.drafts ??= [];
+      if (method === "POST" && !draftId) {
+        const b = (body ?? {}) as { to?: string; cc?: string[]; bcc?: string[]; subject?: string; body?: string; bodyHtml?: string };
+        const draft: Draft = {
+          id: `draft-${++seq}`, inboxId, to: b.to ?? null, cc: b.cc ?? [], bcc: b.bcc ?? [],
+          subject: b.subject ?? "", bodyText: b.body ?? null, bodyHtml: b.bodyHtml ?? null,
+          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        };
+        drafts.push(draft);
+        return json(201, draft);
+      }
+      if (method === "GET" && draftId) {
+        const draft = drafts.find((row) => row.inboxId === inboxId && row.id === draftId);
+        return draft ? json(200, draft) : json(404, { error: "not_found", message: "Draft not found" });
+      }
+      if (method === "GET") {
+        const q = url.searchParams.get("q")?.toLowerCase();
+        const matches = drafts.filter((row) => row.inboxId === inboxId && (!q || [row.to, row.subject, row.bodyText, row.bodyHtml].some((field) => field?.toLowerCase().includes(q))));
+        const offset = Number(url.searchParams.get("offset") ?? 0);
+        const limit = Number(url.searchParams.get("limit") ?? 50);
+        return json(200, { data: matches.slice(offset, offset + limit), total: matches.length });
+      }
+    }
 
     if (method === "POST" && path === "/v1/inboxes") {
       const b = (body ?? {}) as { mailboxName?: string; displayName?: string; domain?: string; podId?: string };

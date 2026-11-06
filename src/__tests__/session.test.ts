@@ -64,6 +64,7 @@ describe("visibleTools", () => {
     for (const write of [
       "mark_thread_read",
       "send_email",
+      "create_draft",
       "reply_to_thread",
       "create_inbox",
       "mint_inbox_key",
@@ -111,6 +112,8 @@ describe("visibleTools", () => {
         "send_mcp_feedback",
         "list_inboxes",
         "get_inbox",
+        "list_drafts",
+        "get_draft",
         "list_unread_threads",
         "read_thread",
         "get_attachment_text",
@@ -120,7 +123,7 @@ describe("visibleTools", () => {
         "get_domain",
       ].sort(),
     );
-    expect(tools).toHaveLength(13);
+    expect(tools).toHaveLength(15);
   });
 });
 
