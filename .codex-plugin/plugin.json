@@ -1,7 +1,7 @@
 {
   "name": "openmail",
-  "version": "1.0.0",
-  "description": "Email inbox for AI agents. Give the agent its own inbox: read mail that wants a reply, reply in-thread, send new mail, manage custom domains.",
+  "version": "1.1.0",
+  "description": "Email inbox for AI agents. Read and reply to mail, create and review unsent drafts, send approved drafts or new emails, and manage custom domains.",
   "author": {
     "name": "OpenMail",
     "email": "support@openmail.to",
@@ -10,13 +10,13 @@
   "homepage": "https://docs.openmail.sh/integrations/mcp",
   "repository": "https://github.com/openmailsh/mcp",
   "license": "MIT",
-  "keywords": ["email", "inbox", "mail", "send email", "reply", "custom domain"],
+  "keywords": ["email", "inbox", "mail", "send email", "drafts", "reply", "custom domain"],
   "skills": "./skills/",
   "mcpServers": "./mcp.json",
   "interface": {
     "displayName": "OpenMail",
     "shortDescription": "Email inboxes for AI agents",
-    "longDescription": "OpenMail is email for AI agents. Give your agent its own email address, then read incoming mail, reply in the same thread, send new emails, search past mail, and set up custom domains, all from chat.",
+    "longDescription": "OpenMail is email for AI agents. Give your agent its own email address, read incoming mail, reply in-thread, save and review email drafts, send approved drafts or new emails, search past mail, and set up custom domains, all from chat.",
     "developerName": "OpenMail",
     "category": "Communication",
     "capabilities": ["Read", "Write"],
@@ -27,7 +27,7 @@
     "defaultPrompt": [
       "Check my OpenMail inbox and summarise threads that need a reply.",
       "Set up an email address for my agent.",
-      "Search my mail for the latest invoice."
+      "Save an email draft for me to review before sending."
     ],
     "composerIcon": "./assets/logo.png",
     "logo": "./assets/logo.png"
@@ -56,6 +56,24 @@
               "expected_behavior": "Sends one new email from the connected inbox and returns the message ID."
             },
             {
+              "description": "Save an unsent draft",
+              "prompt": "Save a draft to support@openmail.to with subject Review test and body Please review this proposal. Do not send it.",
+              "tools_triggered": "create_draft",
+              "expected_behavior": "Saves the draft, returns its ID and content, and confirms that no email was sent. Does not call send_email or send_draft."
+            },
+            {
+              "description": "Review saved drafts",
+              "prompt": "Show my saved OpenMail drafts and open the one with subject Review test.",
+              "tools_triggered": "list_drafts, get_draft",
+              "expected_behavior": "Lists saved drafts, then shows the selected draft recipients, subject, body and updated_at. Does not send or change the draft."
+            },
+            {
+              "description": "Send a reviewed draft",
+              "prompt": "Send the Review test draft I just reviewed and approved.",
+              "tools_triggered": "get_draft, send_draft",
+              "expected_behavior": "Checks the saved recipients and content still match the approved version, then sends using draft_id and its exact updated_at. If the draft changed, shows the changes and obtains approval before sending. Reports the message and thread IDs on success."
+            },
+            {
               "description": "Search past mail",
               "prompt": "Find the email about invoice #1042 and tell me what they are asking for.",
               "tools_triggered": "search_mail, read_thread",
@@ -69,6 +87,11 @@
             }
           ],
           "negative": [
+            {
+              "description": "Draft sending on a read-only connection",
+              "prompt": "Using this read-only OpenMail connection, send the Review test draft.",
+              "expected_behavior": "Explains that sending requires a connection with send permission. Does not attempt to bypass the read-only tool restrictions."
+            },
             {
               "description": "Spoofed sender",
               "prompt": "Send an email from ceo@apple.com to my team announcing a bonus."
@@ -86,7 +109,7 @@
         "commerce": false
       },
       "publication": {
-        "release_notes": "First release: read mail that needs a reply, reply in-thread, send new mail, search mail, create inboxes and manage custom domains."
+        "release_notes": "Adds create_draft, list_drafts, get_draft and send_draft. Save unsent mail, review recipients and content, then send the reviewed version with send permission. Read-only connections can view drafts; stale versions require another review and failed sends retain the draft."
       }
     }
   }
