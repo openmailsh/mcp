@@ -334,3 +334,42 @@ Hosted HTTP is the product. Bridge with:
 - Reply to unread mail that needs an answer.
 - Add and verify mail.example.com.
 `;
+
+export type Draft = {
+  id: string;
+  inboxId: string;
+  to: string | null;
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  bodyText: string | null;
+  bodyHtml: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export function formatDraft(draft: Draft): string {
+  return [
+    `# Draft: ${draft.subject || "(no subject)"}`,
+    `draft: ${draft.id}`,
+    `inbox: ${draft.inboxId}`,
+    `To: ${draft.to || "(no recipient)"}`,
+    ...(draft.cc.length ? [`CC: ${draft.cc.join(", ")}`] : []),
+    ...(draft.bcc.length ? [`BCC: ${draft.bcc.join(", ")}`] : []),
+    `Updated: ${formatTimestamp(draft.updatedAt)}`,
+    `updated_at: ${draft.updatedAt}`,
+    "Status: unsent draft",
+    "",
+    draft.bodyText || draft.bodyHtml || "(empty body)",
+  ].join("\n");
+}
+
+export function formatDrafts(rows: Draft[], total: number, inboxId: string, offset: number): string {
+  if (!rows.length) return `No drafts on this page in ${inboxId}. Total: ${total}. Offset: ${offset}.`;
+  const nextOffset = offset + rows.length;
+  return [
+    `Drafts in ${inboxId}: ${offset + 1}–${nextOffset} of ${total}`,
+    ...rows.map((draft) => `- ${draft.subject || "(no subject)"} → ${draft.to || "(no recipient)"}\n  draft: ${draft.id}`),
+    ...(nextOffset < total ? [`More drafts: call list_drafts with offset ${nextOffset}.`] : []),
+  ].join("\n");
+}

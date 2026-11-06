@@ -1,8 +1,8 @@
 {
   "name": "openmail",
   "displayName": "OpenMail",
-  "version": "0.1.0",
-  "description": "Email inbox for AI agents. Give the agent its own inbox: read mail that wants a reply, reply in-thread, send new mail, manage custom domains.",
+  "version": "0.2.0",
+  "description": "Email inbox for AI agents. Read and reply to mail, create and review unsent drafts, send approved drafts or new emails, and manage custom domains.",
   "author": {
     "name": "OpenMail",
     "email": "support@openmail.to",
@@ -15,6 +15,6 @@
   "termsOfServiceUrl": "https://openmail.sh/terms",
   "repository": "https://github.com/openmailsh/mcp",
   "license": "MIT",
-  "keywords": ["email", "inbox", "mail", "gmail", "send email", "reply", "verification code", "custom domain"],
+  "keywords": ["email", "inbox", "mail", "gmail", "send email", "drafts", "reply", "verification code", "custom domain"],
   "mcpServers": "./.mcp.json"
 }
