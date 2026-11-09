@@ -102,6 +102,17 @@ describe("redactMailContent", () => {
     expect(out.properties.$mcp_parameters).toEqual({ request: { params: { arguments: { inbox_id: "inbox-a" } } } });
   });
 
+  it("redacts draft HTML and draft search queries", () => {
+    for (const [tool, args] of [
+      ["create_draft", { body_html: "<p>Private draft</p>", bodyHtml: "Private fallback", cc: ["copy@example.com"], bcc: ["secret@example.com"] }],
+      ["list_drafts", { query: "Private subject" }],
+    ] as const) {
+      const out = redactMailContent(event(tool, { request: { params: { arguments: args } } })) as ReturnType<typeof event>;
+      expect(out.properties.$mcp_response).toBeUndefined();
+      expect(out.properties.$mcp_parameters).toEqual({ request: { params: { arguments: {} } } });
+    }
+  });
+
   it("keeps the response for the public docs tools", () => {
     const out = redactMailContent(event("search_docs", { query: "send email" })) as ReturnType<typeof event>;
     expect(out.properties.$mcp_response).toBe("secret");

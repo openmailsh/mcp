@@ -1,6 +1,6 @@
 ---
 name: openmail
-description: Email for the agent through the OpenMail MCP connector. Use when the user wants to contact a person, company, or service by email, wait for or check on a reply, sign up for something and confirm the account, receive a verification code or magic link, handle an inbound support request, or anything else that happens over email, even when they say "reach out", "contact support", "sign up", "did they answer", or "subscribe" rather than "email". Also use when the agent needs an address of its own.
+description: Email for the agent through the OpenMail MCP connector. Use when the user wants to save, find, review, or send an email draft, contact a person, company, or service by email, wait for or check on a reply, sign up for something and confirm the account, receive a verification code or magic link, handle an inbound support request, or anything else that happens over email, even when they say "reach out", "contact support", "sign up", "did they answer", or "subscribe" rather than "email". Also use when the agent needs an address of its own.
 license: MIT
 ---
 
@@ -22,11 +22,17 @@ Before you act on a thread, `read_thread` the whole of it. Replies written from 
 
 Attachments show a `message:` id under the filename in `read_thread`. Pass that id, not the thread id, to `get_attachment_text`. PDF, Office files, and images (OCR) come back as text.
 
+## Drafts
+
+When asked to save or prepare an unsent email, use `create_draft`. Recipient, subject and body may be omitted for incomplete drafts. `list_drafts` finds saved drafts and `get_draft` reads their content. Saving a draft never sends email. Return the saved draft ID and content so the user can review it. The console can edit recipients and send drafts; subject and body remain read-only. Sending is a separate action and needs the user’s instruction.
+
+To send a saved draft, read it with `get_draft`, then call `send_draft` with its `draft_id` and exact `updated_at`. Creation and sending require OAuth `send` scope (or an API key); read-only connections can list and read drafts. Use `send_draft` for saved drafts so delivery uses their stored recipients and content and removes them only on success. Do not copy the draft into `send_email`. If the version is stale, show the changed recipients or content for review before retrying; failed sends retain the draft.
+
 ## Sending
 
 Replying to something you received: `reply_to_thread` with the `thread_id`, always. It keeps the headers intact so the recipient's mail client shows one conversation. Starting a conversation that does not exist yet: `send_email` with `to`, `subject`, `body`.
 
-Before you call either one, show the user the recipient and the full body exactly as it will go, and wait for their go. Do not call the tool and let the permission prompt do the asking; the prompt shows raw arguments, your draft shows the mail. Both tools are flagged destructive, so the client asks once more at send time. One recipient per message; use `cc` for others.
+For `send_email`, `reply_to_thread`, and `send_draft`, show the recipients (including Cc/Bcc), subject, and full body and obtain approval before sending, unless the user has already approved that exact content and recipients in this conversation. Preparing or reviewing a draft alone does not authorize sending. These tools are flagged destructive; do not rely on a client permission prompt to convey the message content. One To recipient per message; use `cc` or `bcc` for others.
 
 Do not invent a From address. Mail leaves from the inbox you pass (or the only inbox you have); if the user wants a different sender, that is a different inbox or a custom domain.
 

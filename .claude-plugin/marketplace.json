@@ -6,12 +6,12 @@
   },
   "metadata": {
     "description": "OpenMail hosted MCP server: give the agent its own inbox",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {
       "name": "openmail",
-      "description": "Email inbox for AI agents. Read mail that wants a reply, reply in-thread, send new mail, manage custom domains. OAuth sign-in on first use.",
+      "description": "Email inbox for AI agents. Read and reply to mail, save and review drafts, send approved drafts or new emails, and manage custom domains. OAuth sign-in on first use.",
       "source": "./"
     }
   ]
