@@ -206,26 +206,41 @@ export function stripQuotedReply(body: string): string {
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
+/** Apply `re` until the string stops changing, so nested or overlapping
+ *  fragments (`<scr<script>ipt>`) cannot survive one pass. */
+function replaceUntilStable(text: string, re: RegExp, by: string): string {
+  let prev: string;
+  do {
+    prev = text;
+    text = text.replace(re, by);
+  } while (text !== prev);
+  return text;
+}
+
 /**
  * Plain text from an HTML body. Links keep their URL ("Confirm (https://…)"),
- * since a confirmation link is often the only thing an agent needs.
+ * since a confirmation link is often the only thing an agent needs. The output
+ * is text for an agent to read, never rendered as HTML.
  */
 export function htmlToText(html: string): string {
-  return html
-    .replace(/<(script|style|head)\b[\s\S]*?<\/\1\s*>/gi, "")
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a\s*>/gi, (_, href: string, inner: string) => {
-      const label = inner.replace(/<[^>]+>/g, "").trim();
-      return !label || label === href ? ` ${href} ` : `${label} (${href})`;
-    })
+  let text = replaceUntilStable(html, /<(script|style|head)\b[\s\S]*?<\/\1\s*>/gi, "");
+  text = replaceUntilStable(text, /<!--[\s\S]*?-->/g, "");
+  text = text.replace(/<a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a\s*>/gi, (_, href: string, inner: string) => {
+    const label = replaceUntilStable(inner, /<[^>]*>/g, "").trim();
+    return !label || label === href ? ` ${href} ` : `${label} (${href})`;
+  });
+  text = text
     .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li|tr|h[1-6]|table|blockquote)\s*>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
+    .replace(/<\/(p|div|li|tr|h[1-6]|table|blockquote)\s*>/gi, "\n");
+  // Drop remaining tags, then any stray "<" so no tag can be reassembled.
+  text = replaceUntilStable(text, /<[^>]*>/g, "").replace(/</g, "");
+  return text
     .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, code: string) => {
       if (code[0] === "#") {
         const n = code[1].toLowerCase() === "x" ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
         return Number.isFinite(n) ? String.fromCodePoint(n) : entity;
       }
+      // "&lt;" decodes to "<"; keep it as text, it is never parsed as HTML.
       return ENTITIES[code.toLowerCase()] ?? entity;
     })
     .replace(/[ \t\u00a0]+/g, " ")
