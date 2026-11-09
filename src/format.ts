@@ -63,6 +63,7 @@ export function formatThread(thread: {
     toAddr?: string;
     createdAt?: string;
     bodyText?: string | null;
+    bodyHtml?: string | null;
     subject?: string | null;
     autoReplyable?: boolean | null;
     category?: string | null;
@@ -91,7 +92,13 @@ export function formatThread(thread: {
       );
     }
     if (meta.length) lines.push(meta.join(" · "));
-    lines.push(clip(stripQuotedReply(message.bodyText || "") || "(empty body)", 6000));
+    // HTML-only mail (many signup confirmations) has no text part; fall back
+    // to the HTML so the agent still sees the body and its links.
+    const body = message.bodyText?.trim() ? message.bodyText : htmlToText(message.bodyHtml || "");
+    // Outlook forwards carry no "Forwarded message" line, only a From:/Sent:
+    // block, so a forward subject is the only sign the rest is content.
+    const isForward = /^\s*(fwd?|wg|tr|rv|enc)\s*:/i.test(message.subject || "");
+    lines.push(clip((isForward ? body.trim() : stripQuotedReply(body)) || "(empty body)", 6000));
     if (message.attachments?.length) {
       lines.push(
         `attachments: ${message.attachments.map((a) => a.filename).join(", ")} (get_attachment_text with message_id ${message.id})`,
@@ -163,13 +170,28 @@ const QUOTE_MARKERS: RegExp[] = [
   /^El [^\n]* escribió:\s*$/m,
 ];
 
+// Where a forwarded message starts. Its header block (From:/Date:) looks like
+// an Outlook quote header, but the content below it is what the user sent the
+// agent to read, so no cut may happen at or after it.
+const FORWARD_MARKERS: RegExp[] = [
+  /^-{3,}\s*(?:Forwarded message|Weitergeleitete Nachricht|Message transféré|Mensaje reenviado|Doorgestuurd bericht)\s*-{3,}\s*$/mi,
+  /^Begin forwarded message:\s*$/mi,
+];
+
 /** Drop the quoted history a reply carries; keep the new text on top. */
 export function stripQuotedReply(body: string): string {
+  let forwardAt = body.length;
+  for (const marker of FORWARD_MARKERS) {
+    const match = marker.exec(body);
+    if (match && match.index < forwardAt) forwardAt = match.index;
+  }
   let cut = body.length;
   for (const marker of QUOTE_MARKERS) {
-    const match = marker.exec(body);
+    const match = marker.exec(body.slice(0, forwardAt));
     if (match && match.index < cut) cut = match.index;
   }
+  // A forward with no reply quote above it is kept whole.
+  if (forwardAt < body.length && cut === body.length) return body.trim();
   let head = body.slice(0, cut);
   // A trailing block of `>` lines is quoted too, even without a marker —
   // but only if there is something unquoted above it to keep.
@@ -179,6 +201,36 @@ export function stripQuotedReply(body: string): string {
   // Never hide the whole message: a body that is nothing but a quote is
   // still the only text there is.
   return head || body.trim();
+}
+
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+
+/**
+ * Plain text from an HTML body. Links keep their URL ("Confirm (https://…)"),
+ * since a confirmation link is often the only thing an agent needs.
+ */
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<(script|style|head)\b[\s\S]*?<\/\1\s*>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a\s*>/gi, (_, href: string, inner: string) => {
+      const label = inner.replace(/<[^>]+>/g, "").trim();
+      return !label || label === href ? ` ${href} ` : `${label} (${href})`;
+    })
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|tr|h[1-6]|table|blockquote)\s*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, code: string) => {
+      if (code[0] === "#") {
+        const n = code[1].toLowerCase() === "x" ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
+        return Number.isFinite(n) ? String.fromCodePoint(n) : entity;
+      }
+      return ENTITIES[code.toLowerCase()] ?? entity;
+    })
+    .replace(/[ \t\u00a0]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 export function formatDns(domain: {

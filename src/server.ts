@@ -169,6 +169,7 @@ type ThreadMessages = {
     toAddr?: string;
     createdAt?: string;
     bodyText?: string | null;
+    bodyHtml?: string | null;
     autoReplyable?: boolean | null;
     category?: string | null;
     attachments?: Array<{ filename: string }>;
