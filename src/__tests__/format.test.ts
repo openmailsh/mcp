@@ -1,5 +1,65 @@
 import { describe, expect, it } from "vitest";
-import { stripQuotedReply } from "../format";
+import { formatThread, htmlToText, stripQuotedReply } from "../format";
+
+describe("forwarded mail", () => {
+  const forward =
+    "FYI, see below.\n\n---------- Forwarded message ---------\nFrom: News <news@x.com>\nDate: Mon, 9 Nov 2026\nSubject: Weekly\nTo: me@x.com\n\nThe newsletter body.";
+
+  it("keeps a Gmail forward whole", () => {
+    expect(stripQuotedReply(forward)).toBe(forward);
+  });
+
+  it("keeps an Apple Mail forward whole", () => {
+    const body = "See this.\n\nBegin forwarded message:\n\nFrom: A <a@x.com>\nDate: Monday\n\nOriginal text.";
+    expect(stripQuotedReply(body)).toBe(body);
+  });
+
+  it("still strips a reply quote above a forward", () => {
+    expect(stripQuotedReply(`Thanks!\n\nOn Mon, 9 Nov 2026, B <b@x.com> wrote:\n> ${forward}`)).toBe("Thanks!");
+  });
+
+  it("keeps an Outlook forward whole when the subject says Fwd", () => {
+    const out = formatThread({
+      threadId: "t1",
+      subject: "FW: Weekly",
+      messages: [
+        {
+          id: "m1",
+          direction: "inbound",
+          fromAddr: "me@x.com",
+          bodyText: "FYI\n\n________________________________\nFrom: News <news@x.com>\nSent: Monday\n\nThe newsletter body.",
+        },
+      ],
+    });
+    expect(out).toContain("The newsletter body.");
+  });
+});
+
+describe("HTML-only mail", () => {
+  it("falls back to bodyHtml and keeps link URLs", () => {
+    const out = formatThread({
+      threadId: "t1",
+      subject: "Confirm",
+      messages: [
+        {
+          id: "m1",
+          direction: "inbound",
+          fromAddr: "noreply@x.com",
+          bodyText: "",
+          bodyHtml:
+            '<html><head><style>p{}</style></head><body><p>Hi &amp; welcome</p><a href="https://x.com/confirm?t=1&amp;u=2">Confirm email</a></body></html>',
+        },
+      ],
+    });
+    expect(out).toContain("Hi & welcome");
+    expect(out).toContain("Confirm email (https://x.com/confirm?t=1&u=2)");
+    expect(out).not.toContain("(empty body)");
+  });
+
+  it("shows a bare URL once when the link text is the URL", () => {
+    expect(htmlToText('<a href="https://x.com/a">https://x.com/a</a>')).toBe("https://x.com/a");
+  });
+});
 
 describe("stripQuotedReply", () => {
   it("cuts a Gmail-style quote header, including one that wrapped", () => {
