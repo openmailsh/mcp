@@ -27,7 +27,6 @@ describe("forwarded mail", () => {
           id: "m1",
           direction: "inbound",
           fromAddr: "me@x.com",
-          subject: "FW: Weekly",
           bodyText: "FYI\n\n________________________________\nFrom: News <news@x.com>\nSent: Monday\n\nThe newsletter body.",
         },
       ],

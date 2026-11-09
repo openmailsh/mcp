@@ -97,7 +97,8 @@ export function formatThread(thread: {
     const body = message.bodyText?.trim() ? message.bodyText : htmlToText(message.bodyHtml || "");
     // Outlook forwards carry no "Forwarded message" line, only a From:/Sent:
     // block, so a forward subject is the only sign the rest is content.
-    const isForward = /^\s*(fwd?|wg|tr|rv|enc)\s*:/i.test(message.subject || "");
+    // read_thread sets that subject on the thread; messages have none.
+    const isForward = /^\s*(fwd?|wg|tr|rv|enc)\s*:/i.test(message.subject || thread.subject || "");
     lines.push(clip((isForward ? body.trim() : stripQuotedReply(body)) || "(empty body)", 6000));
     if (message.attachments?.length) {
       lines.push(
