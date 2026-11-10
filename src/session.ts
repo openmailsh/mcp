@@ -29,6 +29,7 @@ export const ALL_TOOLS = [
   "list_unread_threads",
   "read_thread",
   "mark_thread_read",
+  "get_attachment",
   "get_attachment_text",
   "search_mail",
   "forward_message",
@@ -106,7 +107,7 @@ export function visibleTools(ctx: SessionContext): ToolName[] {
 
   if (ctx.toolsets.has("mailbox")) {
     if (!inboxLocked) tools.push("list_inboxes");
-    tools.push("get_inbox", "list_unread_threads", "read_thread", "get_attachment_text", "search_mail");
+    tools.push("get_inbox", "list_unread_threads", "read_thread", "get_attachment", "get_attachment_text", "search_mail");
     // Marking read is a write (PATCH /v1/threads/:id); readonly sessions get none.
     if (!ctx.readonly) tools.push("mark_thread_read");
     if (!ctx.readonly && hasScope(ctx, "send")) {

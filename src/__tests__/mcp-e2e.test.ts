@@ -222,7 +222,7 @@ describe("tools/list", () => {
     expect(await toolNames(client)).toEqual(
       sorted([
         "search_docs", "get_docs", "auth_me", "send_mcp_feedback",
-        "get_inbox", "list_unread_threads", "read_thread", "get_attachment_text", "search_mail",
+        "get_inbox", "list_unread_threads", "read_thread", "get_attachment", "get_attachment_text", "search_mail",
         "mark_thread_read", "send_email", "reply_to_thread", "forward_message",
       ]),
     );
@@ -494,6 +494,7 @@ describe("mailbox tools", () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     const result = await call(client, "read_thread", { thread_id: "thread-a1" });
     expect(result.text).toContain("attachments: invoice.pdf");
+    expect(result.text).toContain("get_attachment for the file");
     expect(result.text).toContain("message: msg-a1");
     // Round-trip: the id read_thread printed is the one the attachment tool accepts.
     const att = await call(client, "get_attachment_text", { message_id: "msg-a1", filename: "invoice.pdf" });
@@ -593,6 +594,77 @@ describe("mailbox tools", () => {
     const result = await call(client, "get_attachment_text", { message_id: "msg-a1", filename: "invoice.pdf" });
     expect(result.isError).toBe(false);
     expect(result.text).toContain("Invoice #42 total 100 EUR");
+  });
+
+  it("get_attachment returns an image block for a png the API labeled octet-stream", async () => {
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    api.state.attachments["msg-a1/pixel.png"] = {
+      inboxId: "inbox-a",
+      text: "S",
+      bytes: png,
+      contentType: "application/octet-stream",
+    };
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await client.callTool({ name: "get_attachment", arguments: { message_id: "msg-a1", filename: "pixel.png" } });
+    expect(result.isError).toBeFalsy();
+    const content = result.content as Array<{ type: string; data?: string; mimeType?: string; text?: string }>;
+    expect(content.map((c) => c.type)).toEqual(["text", "image"]);
+    expect(content[1]).toMatchObject({ type: "image", mimeType: "image/png", data: png.toString("base64") });
+    expect(content[0].text).toContain("pixel.png");
+    // No text-extraction call: that path is what turned a real photo into "S".
+    expect(api.calls("GET", /^\/v1\/attachments\/msg-a1\/pixel\.png\/text$/)).toHaveLength(0);
+    expect(api.calls("GET", /^\/v1\/attachments\/msg-a1\/pixel\.png$/)).toHaveLength(1);
+  });
+
+  it("an inbox-scoped key can fetch its own attachment, after the inbox check", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    const result = await client.callTool({ name: "get_attachment", arguments: { message_id: "msg-a1", filename: "invoice.pdf" } });
+    expect(result.isError).toBeFalsy();
+    expect(api.calls("GET", /^\/v1\/attachments\/msg-a1\/invoice\.pdf\/text$/)).toHaveLength(1);
+    expect(api.calls("GET", /^\/v1\/attachments\/msg-a1\/invoice\.pdf$/)).toHaveLength(1);
+  });
+
+  it("get_attachment returns a pdf as an embedded blob", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await client.callTool({ name: "get_attachment", arguments: { message_id: "msg-a1", filename: "invoice.pdf" } });
+    expect(result.isError).toBeFalsy();
+    const content = result.content as Array<{ type: string; resource?: { mimeType?: string; blob?: string; uri?: string } }>;
+    expect(content[1].resource).toMatchObject({
+      mimeType: "application/pdf",
+      uri: "openmail://attachment/msg-a1/invoice.pdf",
+      blob: Buffer.from("Invoice #42 total 100 EUR").toString("base64"),
+    });
+  });
+
+  it("a URL-locked session cannot fetch another inbox's attachment file", async () => {
+    const client = await connect("/mcp/inbox/inbox-a", ACCOUNT_KEY);
+    const result = await client.callTool({ name: "get_attachment", arguments: { message_id: "msg-b1", filename: "other.pdf" } });
+    expect(result.isError).toBe(true);
+    const dumped = JSON.stringify(result.content);
+    expect(dumped).not.toContain("Secret from inbox B");
+    expect(dumped).not.toContain(Buffer.from("Secret from inbox B").toString("base64"));
+    expect(api.calls("GET", /^\/v1\/attachments\/msg-b1\/other\.pdf\/text$/)).toHaveLength(1);
+    expect(api.calls("GET", /^\/v1\/attachments\/msg-b1\/other\.pdf$/)).toHaveLength(0);
+  });
+
+  it("get_attachment refuses a file over the inline limit and does not embed it", async () => {
+    api.state.attachments["msg-a1/huge.bin"] = {
+      inboxId: "inbox-a",
+      text: "",
+      bytes: Buffer.from("not-the-file"),
+      contentType: "application/octet-stream",
+      contentLength: 8 * 1024 * 1024,
+    };
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await client.callTool({ name: "get_attachment", arguments: { message_id: "msg-a1", filename: "huge.bin" } });
+    expect(result.isError).toBe(true);
+    const dumped = JSON.stringify(result.content);
+    expect(dumped).toContain("get_attachment_text");
+    expect(dumped).toContain("signed download URL");
+    expect(dumped).not.toContain(Buffer.from("not-the-file").toString("base64"));
   });
 
   it("surfaces API errors as isError results instead of protocol failures", async () => {

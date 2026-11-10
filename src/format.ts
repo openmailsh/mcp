@@ -80,8 +80,8 @@ export function formatThread(thread: {
     const when = formatTimestamp(message.createdAt);
     const to = message.direction === "outbound" && message.toAddr ? ` to ${message.toAddr}` : "";
     lines.push(`## ${message.direction} from ${from}${to}${when ? ` — ${when}` : ""}`);
-    // Every message's id: forward_message, delete_message, and
-    // get_attachment_text all take it.
+    // Every message's id: forward_message, delete_message, and the
+    // attachment tools all take it.
     const meta: string[] = [`message: ${message.id}`];
     if (message.category) meta.push(`category: ${message.category}`);
     if (message.direction === "inbound" && message.autoReplyable != null) {
@@ -102,7 +102,7 @@ export function formatThread(thread: {
     lines.push(clip((isForward ? body.trim() : stripQuotedReply(body)) || "(empty body)", 6000));
     if (message.attachments?.length) {
       lines.push(
-        `attachments: ${message.attachments.map((a) => a.filename).join(", ")} (get_attachment_text with message_id ${message.id})`,
+        `attachments: ${message.attachments.map((a) => a.filename).join(", ")} (get_attachment for the file, get_attachment_text for extracted text; message_id ${message.id})`,
       );
     }
     lines.push("");
