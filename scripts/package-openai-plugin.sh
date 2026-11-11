@@ -10,10 +10,12 @@ out="$PWD/openmail-openai-plugin.zip"
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 
-cp -R .codex-plugin skills assets "$stage/"
+mkdir -p "$stage/plugin"
+cp -R .codex-plugin "$stage/"
+cp -R plugin/skills plugin/assets "$stage/plugin/"
 cp openai/mcp.json "$stage/mcp.json"
 
 rm -f "$out"
-(cd "$stage" && zip -rq "$out" .codex-plugin mcp.json skills assets -x '*.DS_Store')
+(cd "$stage" && zip -rq "$out" .codex-plugin mcp.json plugin -x '*.DS_Store')
 echo "Wrote $out"
 unzip -l "$out"
