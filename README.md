@@ -2,6 +2,8 @@
 
 Hosted Streamable HTTP MCP at `https://mcp.openmail.sh/mcp`. Email inbox for AI agents: one inbox, read mail that wants a reply, reply in-thread.
 
+Attachments: `get_attachment` returns the file (images as image content, other files as an embedded resource, 4 MB inline limit). `get_attachment_text` returns extracted text only.
+
 There is **no local stdio catalog** — stdio-only clients should use `mcp-remote`.
 
 ## Connect

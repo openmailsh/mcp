@@ -39,12 +39,24 @@ export type FakeInbox = {
   forwardStatus?: string | null;
 };
 
+export type FakeAttachment = {
+  inboxId: string;
+  text: string;
+  /** Raw file. Omitted → the extracted text, as UTF-8. */
+  bytes?: Buffer;
+  contentType?: string;
+  /** Overrides Content-Length. Used to refuse a download before the body is read. */
+  contentLength?: number;
+  /** Two writes and no Content-Length, so the client has to count bytes. */
+  omitContentLength?: boolean;
+};
+
 export type FakeState = {
   /** bearer token → who it is. Anything else is 401. */
   tokens: Record<string, MeResponse>;
   inboxes: FakeInbox[];
   threads: Record<string, FakeThread>;
-  attachments: Record<string, { inboxId: string; text: string }>;
+  attachments: Record<string, FakeAttachment>;
   /** When set, GET /v1/me answers with this instead of looking the token up (simulates an API outage). */
   meFailure?: { status: number; body?: unknown };
   /** Custom domains. A domain with a podId only accepts inboxes created with that podId. */
@@ -240,7 +252,29 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
       const filename = decodeURIComponent(m[2]);
       const att = state.attachments[`${m[1]}/${filename}`];
       if (!att) return json(404, { error: "not_found", message: "Attachment not found" });
-      return json(200, { filename, inboxId: att.inboxId, text: att.text });
+      return json(200, { filename, inboxId: att.inboxId, text: att.text, contentType: att.contentType });
+    }
+
+    if ((m = path.match(/^\/v1\/attachments\/([^/]+)\/([^/]+)$/)) && method === "GET") {
+      const filename = decodeURIComponent(m[2]);
+      const att = state.attachments[`${m[1]}/${filename}`];
+      if (!att) return json(404, { error: "not_found", message: "Attachment not found" });
+      const body = att.bytes ?? Buffer.from(att.text, "utf8");
+      const type = att.contentType ?? "application/octet-stream";
+      if (att.omitContentLength) {
+        res.writeHead(200, { "content-type": type });
+        const cut = Math.min(1, body.length);
+        if (cut) res.write(body.subarray(0, cut));
+        if (body.length > cut) res.write(body.subarray(cut));
+        res.end();
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": type,
+        "content-length": String(att.contentLength ?? body.length),
+      });
+      res.end(body);
+      return;
     }
 
     if (method === "POST" && path === "/v1/feedback") return json(201, { ok: true });
