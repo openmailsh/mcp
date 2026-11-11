@@ -12,7 +12,7 @@
     {
       "name": "openmail",
       "description": "Email inbox for AI agents. Read mail that wants a reply, reply in-thread, send new mail, manage custom domains. OAuth sign-in on first use.",
-      "source": "./"
+      "source": "./plugin"
     }
   ]
 }

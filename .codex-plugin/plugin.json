@@ -11,7 +11,7 @@
   "repository": "https://github.com/openmailsh/mcp",
   "license": "MIT",
   "keywords": ["email", "inbox", "mail", "send email", "reply", "custom domain"],
-  "skills": "./skills/",
+  "skills": "./plugin/skills/",
   "mcpServers": "./mcp.json",
   "interface": {
     "displayName": "OpenMail",
@@ -29,8 +29,8 @@
       "Set up an email address for my agent.",
       "Search my mail for the latest invoice."
     ],
-    "composerIcon": "./assets/logo.png",
-    "logo": "./assets/logo.png"
+    "composerIcon": "./plugin/assets/logo.png",
+    "logo": "./plugin/assets/logo.png"
   },
   "extensions": {
     "com.openai": {
