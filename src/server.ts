@@ -1,10 +1,18 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { SessionContext, ToolName } from "./session.js";
 import { assertLockedInbox, lockedInboxId, visibleTools } from "./session.js";
 import { getDocs, searchDocs } from "./docs.js";
-import { ApiError, type MeResponse, type OpenMailApi } from "./openmail.js";
+import {
+  ATTACHMENT_INLINE_LIMIT,
+  buildAttachmentContent,
+  formatByteSize,
+  resolveMime,
+  specificMime,
+  tooLargeMessage,
+} from "./attachment.js";
+import { ApiError, PayloadTooLargeError, type MeResponse, type OpenMailApi } from "./openmail.js";
 import {
   formatApiError,
   formatDns,
@@ -16,8 +24,13 @@ import {
   formatTimestamp,
 } from "./format.js";
 
-function text(markdown: string, isError = false) {
-  return { content: [{ type: "text" as const, text: markdown }], isError };
+function text(markdown: string, isError = false): CallToolResult {
+  return { content: [{ type: "text", text: markdown }], isError };
+}
+
+/** Same path get_attachment_text already uses, without the `/text` suffix. */
+function attachmentApiPath(messageId: string, filename: string): string {
+  return `/v1/attachments/${messageId}/${encodeURIComponent(filename)}`;
 }
 
 const CC_SCHEMA = z.array(z.string().email()).optional().describe("People to copy on the email. Every recipient sees who was copied.");
@@ -259,6 +272,7 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   get_inbox: read("Show inbox"),
   list_unread_threads: read("List unread threads"),
   read_thread: read("Read thread"),
+  get_attachment: read("Get attachment"),
   get_attachment_text: read("Read attachment"),
   list_domains: read("List domains"),
   get_domain: read("Show domain DNS"),
@@ -289,6 +303,7 @@ export const SERVER_INSTRUCTIONS = [
   "Start with auth_me to see which credential and inbox you have. No inbox yet: setup_agent_email (plan first, then execute=true).",
   "Mailbox loop: list_unread_threads → read_thread → reply_to_thread → mark_thread_read. It lists machine mail too; only reply to threads marked autoReplyable: yes.",
   "For the latest or most recent email, call list_unread_threads with include_read: true. It lists machine mail too, flagged autoReplyable: no.",
+  "Attachments: get_attachment returns the file (images included). get_attachment_text returns extracted text only.",
   "Use reply_to_thread for replies and send_email only for new conversations. Pass inbox_id when the account has more than one inbox (list_inboxes).",
   "Never invent From addresses or paste API keys into chat. Custom domains: add_domain → user publishes DNS → verify_domain.",
   "Unsure how something works: search_docs, then get_docs.",
@@ -318,7 +333,7 @@ export function createMcpServer(input: {
     name: ToolName,
     description: string,
     schema: Record<string, z.ZodTypeAny>,
-    handler: (args: Record<string, unknown>) => Promise<{ content: { type: "text"; text: string }[]; isError?: boolean }>,
+    handler: (args: Record<string, unknown>) => Promise<CallToolResult>,
   ) => {
     if (!allowed.has(name)) return;
     server.registerTool(
@@ -962,23 +977,65 @@ export function createMcpServer(input: {
     },
   );
 
+  const attachmentArgs = {
+    message_id: z.string().describe("The `message:` id shown under the attachment in read_thread"),
+    filename: z.string().describe("Attachment filename exactly as listed after `attachments:` in read_thread."),
+  };
+  const inlineLimit = formatByteSize(ATTACHMENT_INLINE_LIMIT);
+
+  add(
+    "get_attachment",
+    toolDesc({
+      purpose: "The attachment file itself, for a client to view or pass on.",
+      notFor: "Extracted text only (use get_attachment_text).",
+      when: "read_thread listed an attachment and you need the file — an image to look at, or a file to hand on. Use the `message:` id printed under it, not the thread id.",
+      triggers: "what's in this image, show the attachment, open the screenshot, download the file",
+      returns: `Images (png, jpeg, gif, webp) as an image content block. Other files as an embedded resource (UTF-8 text inline, otherwise a base64 blob), plus the filename, type, and size. Files over ${inlineLimit} are an error: OpenMail has no signed download URL, so use get_attachment_text for the extracted text.`,
+    }),
+    attachmentArgs,
+    async (args) => {
+      if (!api) return signIn();
+      const messageId = String(args.message_id);
+      const filename = String(args.filename);
+      const path = attachmentApiPath(messageId, filename);
+      // The download is raw bytes, so it cannot carry inboxId. The text
+      // endpoint does, and a URL-locked session still holds an account-wide
+      // key — without this check it could read another inbox's file.
+      let hintedType: string | undefined;
+      if (lockedInboxId(ctx)) {
+        const meta = (await api.get(`${path}/text`)) as { inboxId?: string; contentType?: string };
+        assertLockedInbox(ctx, meta.inboxId);
+        hintedType = meta.contentType;
+      }
+      let file;
+      try {
+        file = await api.getBinary(path, ATTACHMENT_INLINE_LIMIT);
+      } catch (err) {
+        if (err instanceof PayloadTooLargeError) {
+          const mime = resolveMime(specificMime(err.contentType) ? err.contentType : hintedType, filename);
+          return text(tooLargeMessage(filename, mime, err.size), true);
+        }
+        throw err;
+      }
+      const contentType = specificMime(file.contentType) ? file.contentType : (hintedType ?? file.contentType);
+      return buildAttachmentContent({ messageId, filename, bytes: file.bytes, contentType });
+    },
+  );
+
   add(
     "get_attachment_text",
     toolDesc({
       purpose: "LLM-ready text extracted from an attachment.",
-      notFor: "Downloading raw bytes.",
-      when: "read_thread listed an attachment; use the `message:` id printed under it, not the thread id.",
+      notFor: "The file itself. To view an image or hand the file on, use get_attachment.",
+      when: "read_thread listed an attachment and you only need its text. Use the `message:` id printed under it, not the thread id.",
       triggers: "read the pdf, extract the invoice",
       returns: "The attachment's extracted text under its filename.",
     }),
-    {
-      message_id: z.string().describe("The `message:` id shown under the attachment in read_thread"),
-      filename: z.string().describe("Attachment filename exactly as listed after `attachments:` in read_thread."),
-    },
+    attachmentArgs,
     async (args) => {
       if (!api) return signIn();
       const extracted = (await api.get(
-        `/v1/attachments/${args.message_id}/${encodeURIComponent(String(args.filename))}/text`,
+        `${attachmentApiPath(String(args.message_id), String(args.filename))}/text`,
       )) as { text?: string; filename?: string; inboxId?: string };
       assertLockedInbox(ctx, extracted.inboxId);
       return text(`# ${extracted.filename || args.filename}\n\n${extracted.text || ""}`);

@@ -20,7 +20,7 @@ Several inboxes? Pass `inbox_id` on every send and read. Never guess which one t
 
 Before you act on a thread, `read_thread` the whole of it. Replies written from a one-line summary go wrong. When you have handled a thread, replied or decided no reply is needed, call `mark_thread_read`, otherwise it comes back next time.
 
-Attachments show a `message:` id under the filename in `read_thread`. Pass that id, not the thread id, to `get_attachment_text`. PDF, Office files, and images (OCR) come back as text.
+Attachments show a `message:` id under the filename in `read_thread`. Pass that id, not the thread id, to `get_attachment` (the file) or `get_attachment_text` (extracted text). Use `get_attachment` to look at an image or hand a file on: images come back as image content, other files as an embedded resource. Files over 4 MB are refused — there is no signed download link — and `get_attachment_text` is the fallback for PDF, Office, and OCR text.
 
 ## Sending
 
