@@ -12,6 +12,7 @@
   "license": "MIT",
   "keywords": ["email", "inbox", "mail", "gmail", "send email", "reply", "verification code", "custom domain"],
   "category": "productivity",
-  "logo": "assets/logo.png",
+  "logo": "plugin/assets/logo.png",
+  "skills": "./plugin/skills/",
   "mcpServers": "./mcp.json"
 }
