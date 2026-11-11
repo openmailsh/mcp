@@ -15,6 +15,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { ALL_TOOLS } from "../session.js";
 import {
   startFakeOpenMailApi,
+  type FakeDomain,
   type FakeOpenMailApi,
   type FakeState,
 } from "./helpers/fake-openmail-api.js";
@@ -28,6 +29,15 @@ const INBOX_A_KEY = "om_inbox_a_key";
 let api: FakeOpenMailApi;
 let mcpServer: http.Server;
 let mcpBase: string;
+
+function domainRows(count: number): FakeDomain[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `dom-${index + 1}`,
+    domain: `mail-${index + 1}.example.com`,
+    status: "verified",
+    podId: null,
+  }));
+}
 
 /** Two inboxes, threads in each, one attachment — enough to prove isolation. */
 function seed(): FakeState {
@@ -634,6 +644,65 @@ describe("mailbox tools", () => {
     expect((await call(client, "get_domain", { domain_id: "mail.acme.com" })).isError).toBe(false);
     expect((await call(client, "verify_domain", { domain_id: "mail.acme.com" })).isError).toBe(false);
     expect(api.calls("GET", /^\/v1\/domains\/dom-1$/)).toHaveLength(1);
+  });
+
+  it("lists and resolves domains beyond the first page", async () => {
+    api.state.domains = domainRows(151);
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const listed = await call(client, "list_domains");
+    expect(listed.isError).toBe(false);
+    expect(listed.text.split("\n")).toHaveLength(151);
+    expect(listed.text).toContain("mail-151.example.com (verified) id: dom-151");
+
+    const details = await call(client, "get_domain", { domain_id: "  MAIL-151.EXAMPLE.COM  " });
+    expect(details.isError).toBe(false);
+    expect(details.text).toContain("mail-151.example.com");
+    expect(api.calls("GET", /^\/v1\/domains\/dom-151$/)).toHaveLength(1);
+
+    const verified = await call(client, "verify_domain", { domain_id: "mail-151.example.com" });
+    expect(verified.isError).toBe(false);
+    expect(verified.text).toContain("mail-151.example.com");
+    expect(api.calls("POST", /^\/v1\/domains\/dom-151\/verify$/)).toHaveLength(1);
+  });
+
+  it("infers the pod for a domain beyond the first page when creating an inbox", async () => {
+    api.state.domains = domainRows(151);
+    api.state.domains[150].podId = "pod-9";
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "create_inbox", { mailboxName: "sales", domain: "mail-151.example.com" });
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("sales@mail-151.example.com");
+    expect(api.calls("POST", /^\/v1\/inboxes$/)[0].body).toMatchObject({ podId: "pod-9" });
+  });
+
+  it.each([0, 50, 100])("finishes listing when there are exactly %i domains", async (count) => {
+    api.state.domains = domainRows(count);
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "list_domains");
+    expect(result.isError).toBe(false);
+    if (count === 0) expect(result.text).toBe("No custom domains.");
+    else expect(result.text.split("\n")).toHaveLength(count);
+  });
+
+  it("gets a domain by ID without listing domains", async () => {
+    api.state.domains = domainRows(151);
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "get_domain", { domain_id: "dom-151" });
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("mail-151.example.com");
+    expect(api.calls("GET", /^\/v1\/domains\?/)).toHaveLength(0);
+  });
+
+  it("describes a missing domain in terms of the current connection's access", async () => {
+    api.state.domains = domainRows(151);
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "get_domain", { domain_id: "missing.example.com" });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("missing.example.com");
+    expect(result.text).toContain("domains available to this connection");
+    expect(result.text).toContain("list_domains");
+    expect(result.text).not.toContain("on this account");
+    expect(api.calls("GET", /^\/v1\/domains\/[^?]+$/)).toHaveLength(0);
   });
 
   it("a new-recipient cap gives the limit, the reset, what still sends, and how to raise it", async () => {

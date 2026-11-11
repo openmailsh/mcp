@@ -244,7 +244,12 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
     }
 
     if (method === "POST" && path === "/v1/feedback") return json(201, { ok: true });
-    if (method === "GET" && path === "/v1/domains") return json(200, { data: state.domains ?? [] });
+    if (method === "GET" && path === "/v1/domains") {
+      const domains = state.domains ?? [];
+      const limit = Math.min(Number(url.searchParams.get("limit") ?? 50), 100);
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      return json(200, { data: domains.slice(offset, offset + limit), total: domains.length });
+    }
 
     if ((m = path.match(/^\/v1\/domains\/([^/]+)(\/verify)?$/)) && (method === "GET" || method === "POST")) {
       const d = state.domains?.find((x) => x.id === m![1]);

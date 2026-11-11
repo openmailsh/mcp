@@ -80,8 +80,21 @@ const INBOX_ID = z
 type DomainRow = { id: string; domain: string; status: string; podId?: string | null };
 
 async function listDomains(api: OpenMailApi): Promise<DomainRow[]> {
-  const listed = (await api.get("/v1/domains?limit=50")) as { data?: DomainRow[] };
-  return listed.data ?? [];
+  const domains: DomainRow[] = [];
+  const limit = 100;
+  // Name resolution and pod inference need every visible domain, not just
+  // the newest page. Keep using this credential so API scope still applies.
+  while (true) {
+    const listed = (await api.get(`/v1/domains?limit=${limit}&offset=${domains.length}`)) as {
+      data?: DomainRow[];
+      total?: number;
+    };
+    const rows = listed.data ?? [];
+    domains.push(...rows);
+    if (rows.length === 0 || (listed.total !== undefined ? domains.length >= listed.total : rows.length < limit)) {
+      return domains;
+    }
+  }
 }
 
 /**
@@ -92,7 +105,11 @@ async function resolveDomainId(api: OpenMailApi, ref: string): Promise<string> {
   if (!ref.includes(".")) return ref;
   const wanted = ref.trim().toLowerCase();
   const match = (await listDomains(api)).find((d) => d.domain.toLowerCase() === wanted);
-  if (!match) throw new Error(`There's no domain called ${ref} on this account. Check the domain list, or add it first.`);
+  if (!match) {
+    throw new Error(
+      `Couldn't find ${ref} among the domains available to this connection. Check list_domains and confirm you're connected to the right account with access to the domain. If it hasn't been added yet, add it first.`,
+    );
+  }
   return match.id;
 }
 
@@ -975,7 +992,7 @@ export function createMcpServer(input: {
       notFor: "Platform omail.sh addresses.",
       when: "Checking whether DNS is green.",
       triggers: "list domains, is my domain verified",
-      returns: "Each custom domain's name, verify status, id, and pod id (if scoped). Up to 50 domains.",
+      returns: "Every custom domain available to this connection, with its name, verify status, id, and pod id (if scoped).",
     }),
     {},
     async () => {
