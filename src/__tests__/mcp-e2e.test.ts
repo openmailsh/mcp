@@ -252,6 +252,86 @@ describe("tools/list", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Setup permission guidance and stale tool calls
+// ---------------------------------------------------------------------------
+
+describe("setup permission guidance", () => {
+  const setupCalls = [
+    { name: "setup_agent_email", arguments: { execute: true, mailboxName: "blocked" } },
+    { name: "create_inbox", arguments: { mailboxName: "blocked" } },
+    { name: "mint_inbox_key", arguments: { inbox_id: "inbox-a" } },
+  ];
+
+  it("explains missing setup consent for unadvertised setup calls without contacting inbox APIs", async () => {
+    const client = await connect("/mcp", await oauthToken("domains read send"));
+    const names = await toolNames(client);
+    const instructions = client.getInstructions();
+    expect(instructions).toContain("Set up inboxes");
+    expect(instructions).toMatch(/reconnect/i);
+    expect(instructions).not.toContain("No inbox yet: setup_agent_email");
+
+    for (const tool of setupCalls) {
+      expect(names).not.toContain(tool.name);
+      const result = await call(client, tool.name, tool.arguments);
+      expect(result.isError, tool.name).toBe(true);
+      expect(result.text).toMatch(/setup/i);
+      expect(result.text).toContain("Set up inboxes");
+      expect(result.text).toMatch(/reconnect/i);
+      expect(result.text).toMatch(/refresh.*tool/i);
+      expect(result.text).not.toContain("not found");
+    }
+    expect(api.requests.every((request) => request.method === "GET" && request.path === "/v1/me")).toBe(true);
+    expect(api.state.inboxes).toHaveLength(2);
+  });
+
+  it("keeps the plan-then-execute guidance when setup permission is granted", async () => {
+    const client = await connect("/mcp", await oauthToken("read setup send domains"));
+    expect(client.getInstructions()).toContain("setup_agent_email");
+    expect(client.getInstructions()).toContain("execute=true");
+    expect(client.getInstructions()).not.toContain("Set up inboxes");
+  });
+
+  it.each([
+    { label: "read-only endpoint", path: "/mcp/readonly", token: ACCOUNT_KEY, reason: /read.only/i, hidden: setupCalls },
+    { label: "inbox API key", path: "/mcp", token: INBOX_A_KEY, reason: /inbox/i, hidden: setupCalls },
+    { label: "inbox endpoint", path: "/mcp/inbox/inbox-a", token: ACCOUNT_KEY, reason: /inbox/i, hidden: setupCalls.slice(0, 2) },
+  ])("explains the $label restriction without suggesting broader OAuth consent", async ({ path, token, reason, hidden }) => {
+    const client = await connect(path, token);
+    const names = await toolNames(client);
+    expect(client.getInstructions()).not.toContain("No inbox yet: setup_agent_email");
+    expect(client.getInstructions()).not.toContain("Set up inboxes");
+    for (const tool of hidden) {
+      expect(names).not.toContain(tool.name);
+      const result = await call(client, tool.name, tool.arguments);
+      expect(result.isError, tool.name).toBe(true);
+      expect(result.text).toMatch(reason);
+      expect(result.text).not.toContain("Set up inboxes");
+      expect(result.text).not.toContain("not found");
+    }
+    expect(api.requests.every((request) => request.method === "GET" && request.path === "/v1/me")).toBe(true);
+  });
+
+  it("asks anonymous public clients to sign in instead of advertising setup", async () => {
+    const client = await connect("/mcp/public");
+    expect(client.getInstructions()).toMatch(/sign(?:ing)? in/i);
+    expect(client.getInstructions()).not.toContain("setup_agent_email");
+    for (const tool of setupCalls) {
+      const result = await call(client, tool.name, tool.arguments);
+      expect(result.isError).toBe(true);
+      expect(result.text).toMatch(/sign(?:ing)? in/i);
+    }
+    expect(api.requests).toHaveLength(0);
+  });
+
+  it("preserves the SDK error for unknown tool names", async () => {
+    const client = await connect("/mcp", await oauthToken("domains read send"));
+    const result = await call(client, "missing_tool");
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("MCP error -32602: Tool missing_tool not found");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Authentication
 // ---------------------------------------------------------------------------
 

@@ -134,6 +134,22 @@ export function visibleTools(ctx: SessionContext): ToolName[] {
   return tools;
 }
 
+/** Explain denied setup calls without registering or executing those tools. */
+export function setupToolUnavailableReason(ctx: SessionContext, name: string): string | null {
+  if (name !== "setup_agent_email" && name !== "create_inbox" && name !== "mint_inbox_key") return null;
+  if (visibleTools(ctx).includes(name)) return null;
+  if (ctx.authKind === "none") {
+    return "To set up inboxes, sign in to OpenMail at https://mcp.openmail.sh/mcp. This public connection only provides documentation.";
+  }
+  if (ctx.readonly) {
+    return "Inbox setup is unavailable on this read-only connection. If the user wants to create inboxes or keys, use a writable connection with setup permission.";
+  }
+  if (ctx.apiKeyInboxId || ctx.inboxId) {
+    return "This connection is restricted to one inbox and cannot perform this setup operation. Use the existing inbox; if the user needs inbox setup, connect at https://mcp.openmail.sh/mcp with an account-level credential and setup permission.";
+  }
+  return 'This OAuth connection is missing the setup permission. Use an existing inbox, or, if the user wants to create inboxes or keys, ask them to reconnect OpenMail and enable "Set up inboxes". Then refresh the available tools. Refreshing the access token alone does not add permissions.';
+}
+
 export function looksLikeJwt(token: string): boolean {
   const parts = token.split(".");
   return parts.length === 3 && parts.every((p) => p.length > 0);

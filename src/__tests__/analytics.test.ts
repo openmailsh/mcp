@@ -8,6 +8,7 @@ import type http from "node:http";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { PostHog } from "posthog-node";
+import { SignJWT } from "jose";
 import { redactMailContent } from "../analytics.js";
 import { startFakeOpenMailApi, type FakeOpenMailApi, type FakeState } from "./helpers/fake-openmail-api.js";
 
@@ -143,5 +144,30 @@ describe("tool calls are captured", () => {
     const [call] = await toolCalls();
     expect(call.properties?.$mcp_tool_name).toBe("read_thread");
     expect(call.properties?.$mcp_is_error).toBe(true);
+  });
+
+  it("captures missing setup permission on a tool hidden from discovery", async () => {
+    const token = await new SignJWT({ token_use: "mcp_at", grant_id: "grant-1", customer_id: "cust-1", scope: "domains read send" })
+      .setProtectedHeader({ alg: "HS256", typ: "at+jwt" })
+      .setIssuer(api.url)
+      .setAudience("https://mcp.openmail.sh")
+      .setSubject("cust-1")
+      .setIssuedAt()
+      .setExpirationTime("1h")
+      .sign(new TextEncoder().encode(process.env.MCP_JWT_SECRET!));
+    api.state.tokens[token] = {
+      customerId: "cust-1", plan: "developer", apiKeyScope: "account", mcpScopes: ["domains", "read", "send"],
+    };
+    const client = await connect(token);
+    const result = await client.callTool({ name: "create_inbox", arguments: {} });
+    expect(result.isError).toBe(true);
+    const [call] = await toolCalls();
+    expect(call.properties).toMatchObject({
+      $mcp_tool_name: "create_inbox",
+      $mcp_is_error: true,
+      auth_kind: "oauth",
+      scopes: "domains read send",
+    });
+    expect(api.calls("POST", /^\/v1\/inboxes$/)).toHaveLength(0);
   });
 });

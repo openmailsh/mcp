@@ -1,8 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, type CallToolResult, type ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { SessionContext, ToolName } from "./session.js";
-import { assertLockedInbox, lockedInboxId, visibleTools } from "./session.js";
+import { assertLockedInbox, lockedInboxId, setupToolUnavailableReason, visibleTools } from "./session.js";
 import { getDocs, searchDocs } from "./docs.js";
 import {
   ATTACHMENT_INLINE_LIMIT,
@@ -297,17 +297,44 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   reply_to_thread: hints("Reply to thread", false, true, false, true),
 };
 
-/** Sent in `initialize`: how an agent should drive this server. */
-export const SERVER_INSTRUCTIONS = [
-  "OpenMail gives the agent its own email inboxes.",
-  "Start with auth_me to see which credential and inbox you have. No inbox yet: setup_agent_email (plan first, then execute=true).",
-  "Mailbox loop: list_unread_threads → read_thread → reply_to_thread → mark_thread_read. It lists machine mail too; only reply to threads marked autoReplyable: yes.",
-  "For the latest or most recent email, call list_unread_threads with include_read: true. It lists machine mail too, flagged autoReplyable: no.",
-  "Attachments: get_attachment returns the file (images included). get_attachment_text returns extracted text only.",
-  "Use reply_to_thread for replies and send_email only for new conversations. Pass inbox_id when the account has more than one inbox (list_inboxes).",
-  "Never invent From addresses or paste API keys into chat. Custom domains: add_domain → user publishes DNS → verify_domain.",
-  "Unsure how something works: search_docs, then get_docs.",
-].join("\n");
+/** Sent in `initialize`; recommend only tools this connection can use. */
+function serverInstructions(ctx: SessionContext, allowed: Set<ToolName>): string {
+  const instructions = [
+    "OpenMail gives the agent its own email inboxes.",
+    "Only call tools returned by tools/list for this connection. Permissions can differ between connections; refresh the available tools after reconnecting.",
+    "Never invent From addresses or paste API keys into chat.",
+  ];
+  if (allowed.has("auth_me")) {
+    instructions.push("Start with auth_me to see which credential and inbox you have.");
+  }
+  if (allowed.has("setup_agent_email")) {
+    instructions.push("No inbox yet: setup_agent_email (plan first, then execute=true).");
+  } else {
+    instructions.push(setupToolUnavailableReason(ctx, "setup_agent_email")!);
+  }
+  if (allowed.has("list_unread_threads")) {
+    const loop = (["list_unread_threads", "read_thread", "reply_to_thread", "mark_thread_read"] as const)
+      .filter((name) => allowed.has(name));
+    instructions.push(`Mailbox loop: ${loop.join(" → ")}. It lists machine mail too; only reply to threads marked autoReplyable: yes.`);
+    instructions.push("For the latest or most recent email, call list_unread_threads with include_read: true. It lists machine mail too, flagged autoReplyable: no.");
+  }
+  if (allowed.has("get_attachment")) {
+    instructions.push("Attachments: get_attachment returns the file (images included). get_attachment_text returns extracted text only.");
+  }
+  if (allowed.has("send_email")) {
+    instructions.push("Use reply_to_thread for replies and send_email only for new conversations.");
+  }
+  if (allowed.has("list_inboxes")) {
+    instructions.push("Pass inbox_id when the account has more than one inbox (list_inboxes).");
+  }
+  if (allowed.has("add_domain")) {
+    instructions.push("Custom domains: add_domain → user publishes DNS → verify_domain.");
+  }
+  if (allowed.has("search_docs")) {
+    instructions.push("Unsure how something works: search_docs, then get_docs.");
+  }
+  return instructions.join("\n");
+}
 
 export function createMcpServer(input: {
   ctx: SessionContext;
@@ -326,8 +353,24 @@ export function createMcpServer(input: {
       websiteUrl: "https://openmail.sh",
       icons: [{ src: "https://openmail.sh/apple-touch-icon.png", mimeType: "image/png", sizes: ["180x180"] }],
     },
-    { instructions: SERVER_INSTRUCTIONS },
+    { instructions: serverInstructions(ctx, allowed) },
   );
+
+  // The SDK installs tools/call on the first registration. Wrap that callback
+  // through its public setter so hidden setup tools get an actionable error,
+  // while normal dispatch, validation, and later analytics instrumentation stay
+  // with the SDK. Do not register denied tools or access its private registry.
+  const setRequestHandler = server.server.setRequestHandler;
+  server.server.setRequestHandler = (schema, handler) => {
+    setRequestHandler.call(server.server, schema, async (request, extra) => {
+      const parsed = CallToolRequestSchema.safeParse(request);
+      if (parsed.success) {
+        const reason = setupToolUnavailableReason(ctx, parsed.data.params.name);
+        if (reason) return text(reason, true);
+      }
+      return handler(request, extra);
+    });
+  };
 
   const add = (
     name: ToolName,
@@ -1154,5 +1197,6 @@ export function createMcpServer(input: {
     },
   );
 
+  server.server.setRequestHandler = setRequestHandler;
   return server;
 }
