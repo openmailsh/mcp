@@ -319,7 +319,12 @@ export function formatApiError(err: {
   body?: unknown;
 }): string {
   // Lead with what happened; keep the status and code for support at the end.
-  const message = err.message.trim().replace(/[.!]?$/, ".");
+  const draftMessages: Record<string, string> = {
+    draft_changed: "The saved draft version no longer matches the version you reviewed. Do not send automatically. Call get_draft, show the current recipients, subject, and full body to the user, and obtain approval before calling send_draft with the current updated_at. A failed send can also advance updated_at without changing the content.",
+    send_failed: "The send attempt failed and the draft is still saved. Its updated_at may have advanced even though its content did not change. Do not retry automatically. Call get_draft, show the current recipients, subject, and full body to the user, and obtain approval to retry with the current updated_at. Do not copy the draft into send_email.",
+    draft_sending: "A send of this draft is still in progress or has already been accepted. Do not retry now, change recipients, or copy it into send_email. Wait and check the inbox for the sent message and get_draft for the saved draft before considering another send; a missing draft may already have been sent.",
+  };
+  const message = (draftMessages[err.code] ?? err.message).trim().replace(/[.!]?$/, ".");
   const line = `${message} (OpenMail error ${err.status}, ${err.code})`;
   const hint = errorHint(err.code, err.body);
   return hint ? `${line}\n${hint}` : line;

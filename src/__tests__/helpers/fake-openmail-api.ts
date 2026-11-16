@@ -59,6 +59,7 @@ export type FakeState = {
   threads: Record<string, FakeThread>;
   attachments: Record<string, FakeAttachment>;
   drafts?: Draft[];
+  draftSendFailure?: { status: number; body: { error: string; message: string } };
   /** When set, GET /v1/me answers with this instead of looking the token up (simulates an API outage). */
   meFailure?: { status: number; body?: unknown };
   /** Custom domains. A domain with a podId only accepts inboxes created with that podId. */
@@ -153,10 +154,16 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
       const draft = state.drafts?.find((row) => row.inboxId === inboxId && row.id === draftId);
       if (!draft) return json(404, { error: "not_found", message: "Draft not found" });
       if ((body as { updatedAt?: string })?.updatedAt !== draft.updatedAt) {
-        return json(409, { error: "draft_changed", message: "Draft changed. Review it again before sending." });
+        return json(409, { error: "draft_changed", message: "This draft changed. Refresh before continuing." });
       }
       if (!draft.to || !draft.subject || (!draft.bodyText && !draft.bodyHtml)) {
         return json(400, { error: "incomplete_draft", message: "Complete the draft before sending." });
+      }
+      if (state.draftSendFailure) {
+        if (state.draftSendFailure.body.error === "send_failed") {
+          draft.updatedAt = new Date(Math.max(Date.now(), Date.parse(draft.updatedAt) + 1)).toISOString();
+        }
+        return json(state.draftSendFailure.status, state.draftSendFailure.body);
       }
       state.drafts = state.drafts!.filter((row) => row.id !== draftId);
       return json(200, { messageId: `msg-${++seq}`, threadId: `thread-${seq}`, status: "sent" });

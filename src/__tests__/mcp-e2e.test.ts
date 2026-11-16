@@ -1066,8 +1066,57 @@ describe("email drafts", () => {
     const draft = api.state.drafts![0];
     const result = await call(client, "send_draft", { draft_id: draft.id, updated_at: "2020-01-01T00:00:00.000Z" });
     expect(result.isError).toBe(true);
-    expect(result.text).toContain("Review it again");
+    expect(result.text).toContain("Do not send automatically");
+    expect(result.text).toContain("show the current recipients, subject, and full body to the user");
+    expect(result.text).toContain("obtain approval");
+    expect(result.text).not.toContain("Refresh before continuing");
     expect(api.state.drafts).toEqual([draft]);
+    expect(api.calls("POST", /\/drafts\/[^/]+\/send$/)).toHaveLength(1);
+    expect(api.calls("POST", /\/inboxes\/[^/]+\/send$/)).toHaveLength(0);
+  });
+
+  it("explains failed-send version changes and requires approval before retrying", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    await call(client, "create_draft", { to: "reader@example.com", subject: "Ready", body: "Approved body" });
+    const draft = { ...api.state.drafts![0] };
+    const args = { draft_id: draft.id, updated_at: draft.updatedAt };
+    api.state.draftSendFailure = { status: 502, body: { error: "send_failed", message: "Sending failed. Your draft is saved. Refresh and try again." } };
+
+    const result = await call(client, "send_draft", args);
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("Do not retry automatically");
+    expect(result.text).toContain("even though its content did not change");
+    expect(result.text).toContain("obtain approval to retry");
+    expect(result.text).not.toContain("Refresh and try again");
+    expect(api.state.drafts![0]).toMatchObject({ ...draft, updatedAt: expect.any(String) });
+    expect(api.state.drafts![0].updatedAt).not.toBe(draft.updatedAt);
+    expect(api.calls("POST", /\/drafts\/[^/]+\/send$/)).toHaveLength(1);
+    expect(api.calls("GET", /\/drafts\/[^/]+$/)).toHaveLength(0);
+
+    api.state.draftSendFailure = undefined;
+    const stale = await call(client, "send_draft", args);
+    expect(stale.isError).toBe(true);
+    expect(stale.text).toContain("draft_changed");
+    expect(stale.text).toContain("A failed send can also advance updated_at");
+    expect(api.state.drafts).toHaveLength(1);
+    expect(api.calls("POST", /\/inboxes\/[^/]+\/send$/)).toHaveLength(0);
+  });
+
+  it("tells the agent to wait for a pending send without retrying or bypassing the draft", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    await call(client, "create_draft", { to: "reader@example.com", subject: "Ready", body: "Approved body" });
+    const draft = { ...api.state.drafts![0] };
+    api.state.draftSendFailure = { status: 409, body: { error: "draft_sending", message: "Sending is still being processed. Refresh and try again shortly." } };
+
+    const result = await call(client, "send_draft", { draft_id: draft.id, updated_at: draft.updatedAt });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("Do not retry now");
+    expect(result.text).toContain("Wait and check the inbox");
+    expect(result.text).toContain("a missing draft may already have been sent");
+    expect(result.text).not.toContain("Refresh and try again");
+    expect(api.state.drafts).toEqual([draft]);
+    expect(api.calls("POST", /\/drafts\/[^/]+\/send$/)).toHaveLength(1);
+    expect(api.calls("POST", /\/inboxes\/[^/]+\/send$/)).toHaveLength(0);
   });
 
   it("supports incomplete drafts and defaults to the locked inbox", async () => {
