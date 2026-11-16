@@ -15,6 +15,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { ALL_TOOLS } from "../session.js";
 import {
   startFakeOpenMailApi,
+  type FakeDomain,
   type FakeOpenMailApi,
   type FakeState,
 } from "./helpers/fake-openmail-api.js";
@@ -28,6 +29,15 @@ const INBOX_A_KEY = "om_inbox_a_key";
 let api: FakeOpenMailApi;
 let mcpServer: http.Server;
 let mcpBase: string;
+
+function domainRows(count: number): FakeDomain[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `dom-${index + 1}`,
+    domain: `mail-${index + 1}.example.com`,
+    status: "verified",
+    podId: null,
+  }));
+}
 
 /** Two inboxes, threads in each, one attachment — enough to prove isolation. */
 function seed(): FakeState {
@@ -222,7 +232,7 @@ describe("tools/list", () => {
     expect(await toolNames(client)).toEqual(
       sorted([
         "search_docs", "get_docs", "auth_me", "send_mcp_feedback",
-        "get_inbox", "list_unread_threads", "read_thread", "get_attachment_text", "search_mail",
+        "get_inbox", "list_unread_threads", "read_thread", "get_attachment", "get_attachment_text", "search_mail",
         "list_drafts", "get_draft", "create_draft", "send_draft",
         "mark_thread_read", "send_email", "reply_to_thread", "forward_message",
       ]),
@@ -239,6 +249,86 @@ describe("tools/list", () => {
   it("an OAuth token with every scope matches the account-wide key, minus API-key-only tools", async () => {
     const client = await connect("/mcp", await oauthToken("read setup send domains"));
     expect(await toolNames(client)).toEqual(without(ALL_TOOLS, ...API_KEY_ONLY));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Setup permission guidance and stale tool calls
+// ---------------------------------------------------------------------------
+
+describe("setup permission guidance", () => {
+  const setupCalls = [
+    { name: "setup_agent_email", arguments: { execute: true, mailboxName: "blocked" } },
+    { name: "create_inbox", arguments: { mailboxName: "blocked" } },
+    { name: "mint_inbox_key", arguments: { inbox_id: "inbox-a" } },
+  ];
+
+  it("explains missing setup consent for unadvertised setup calls without contacting inbox APIs", async () => {
+    const client = await connect("/mcp", await oauthToken("domains read send"));
+    const names = await toolNames(client);
+    const instructions = client.getInstructions();
+    expect(instructions).toContain("Set up inboxes");
+    expect(instructions).toMatch(/reconnect/i);
+    expect(instructions).not.toContain("No inbox yet: setup_agent_email");
+
+    for (const tool of setupCalls) {
+      expect(names).not.toContain(tool.name);
+      const result = await call(client, tool.name, tool.arguments);
+      expect(result.isError, tool.name).toBe(true);
+      expect(result.text).toMatch(/setup/i);
+      expect(result.text).toContain("Set up inboxes");
+      expect(result.text).toMatch(/reconnect/i);
+      expect(result.text).toMatch(/refresh.*tool/i);
+      expect(result.text).not.toContain("not found");
+    }
+    expect(api.requests.every((request) => request.method === "GET" && request.path === "/v1/me")).toBe(true);
+    expect(api.state.inboxes).toHaveLength(2);
+  });
+
+  it("keeps the plan-then-execute guidance when setup permission is granted", async () => {
+    const client = await connect("/mcp", await oauthToken("read setup send domains"));
+    expect(client.getInstructions()).toContain("setup_agent_email");
+    expect(client.getInstructions()).toContain("execute=true");
+    expect(client.getInstructions()).not.toContain("Set up inboxes");
+  });
+
+  it.each([
+    { label: "read-only endpoint", path: "/mcp/readonly", token: ACCOUNT_KEY, reason: /read.only/i, hidden: setupCalls },
+    { label: "inbox API key", path: "/mcp", token: INBOX_A_KEY, reason: /inbox/i, hidden: setupCalls },
+    { label: "inbox endpoint", path: "/mcp/inbox/inbox-a", token: ACCOUNT_KEY, reason: /inbox/i, hidden: setupCalls.slice(0, 2) },
+  ])("explains the $label restriction without suggesting broader OAuth consent", async ({ path, token, reason, hidden }) => {
+    const client = await connect(path, token);
+    const names = await toolNames(client);
+    expect(client.getInstructions()).not.toContain("No inbox yet: setup_agent_email");
+    expect(client.getInstructions()).not.toContain("Set up inboxes");
+    for (const tool of hidden) {
+      expect(names).not.toContain(tool.name);
+      const result = await call(client, tool.name, tool.arguments);
+      expect(result.isError, tool.name).toBe(true);
+      expect(result.text).toMatch(reason);
+      expect(result.text).not.toContain("Set up inboxes");
+      expect(result.text).not.toContain("not found");
+    }
+    expect(api.requests.every((request) => request.method === "GET" && request.path === "/v1/me")).toBe(true);
+  });
+
+  it("asks anonymous public clients to sign in instead of advertising setup", async () => {
+    const client = await connect("/mcp/public");
+    expect(client.getInstructions()).toMatch(/sign(?:ing)? in/i);
+    expect(client.getInstructions()).not.toContain("setup_agent_email");
+    for (const tool of setupCalls) {
+      const result = await call(client, tool.name, tool.arguments);
+      expect(result.isError).toBe(true);
+      expect(result.text).toMatch(/sign(?:ing)? in/i);
+    }
+    expect(api.requests).toHaveLength(0);
+  });
+
+  it("preserves the SDK error for unknown tool names", async () => {
+    const client = await connect("/mcp", await oauthToken("domains read send"));
+    const result = await call(client, "missing_tool");
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("MCP error -32602: Tool missing_tool not found");
   });
 });
 
@@ -495,6 +585,7 @@ describe("mailbox tools", () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     const result = await call(client, "read_thread", { thread_id: "thread-a1" });
     expect(result.text).toContain("attachments: invoice.pdf");
+    expect(result.text).toContain("get_attachment for the file");
     expect(result.text).toContain("message: msg-a1");
     // Round-trip: the id read_thread printed is the one the attachment tool accepts.
     const att = await call(client, "get_attachment_text", { message_id: "msg-a1", filename: "invoice.pdf" });
@@ -596,6 +687,77 @@ describe("mailbox tools", () => {
     expect(result.text).toContain("Invoice #42 total 100 EUR");
   });
 
+  it("get_attachment returns an image block for a png the API labeled octet-stream", async () => {
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    api.state.attachments["msg-a1/pixel.png"] = {
+      inboxId: "inbox-a",
+      text: "S",
+      bytes: png,
+      contentType: "application/octet-stream",
+    };
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await client.callTool({ name: "get_attachment", arguments: { message_id: "msg-a1", filename: "pixel.png" } });
+    expect(result.isError).toBeFalsy();
+    const content = result.content as Array<{ type: string; data?: string; mimeType?: string; text?: string }>;
+    expect(content.map((c) => c.type)).toEqual(["text", "image"]);
+    expect(content[1]).toMatchObject({ type: "image", mimeType: "image/png", data: png.toString("base64") });
+    expect(content[0].text).toContain("pixel.png");
+    // No text-extraction call: that path is what turned a real photo into "S".
+    expect(api.calls("GET", /^\/v1\/attachments\/msg-a1\/pixel\.png\/text$/)).toHaveLength(0);
+    expect(api.calls("GET", /^\/v1\/attachments\/msg-a1\/pixel\.png$/)).toHaveLength(1);
+  });
+
+  it("an inbox-scoped key can fetch its own attachment, after the inbox check", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    const result = await client.callTool({ name: "get_attachment", arguments: { message_id: "msg-a1", filename: "invoice.pdf" } });
+    expect(result.isError).toBeFalsy();
+    expect(api.calls("GET", /^\/v1\/attachments\/msg-a1\/invoice\.pdf\/text$/)).toHaveLength(1);
+    expect(api.calls("GET", /^\/v1\/attachments\/msg-a1\/invoice\.pdf$/)).toHaveLength(1);
+  });
+
+  it("get_attachment returns a pdf as an embedded blob", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await client.callTool({ name: "get_attachment", arguments: { message_id: "msg-a1", filename: "invoice.pdf" } });
+    expect(result.isError).toBeFalsy();
+    const content = result.content as Array<{ type: string; resource?: { mimeType?: string; blob?: string; uri?: string } }>;
+    expect(content[1].resource).toMatchObject({
+      mimeType: "application/pdf",
+      uri: "openmail://attachment/msg-a1/invoice.pdf",
+      blob: Buffer.from("Invoice #42 total 100 EUR").toString("base64"),
+    });
+  });
+
+  it("a URL-locked session cannot fetch another inbox's attachment file", async () => {
+    const client = await connect("/mcp/inbox/inbox-a", ACCOUNT_KEY);
+    const result = await client.callTool({ name: "get_attachment", arguments: { message_id: "msg-b1", filename: "other.pdf" } });
+    expect(result.isError).toBe(true);
+    const dumped = JSON.stringify(result.content);
+    expect(dumped).not.toContain("Secret from inbox B");
+    expect(dumped).not.toContain(Buffer.from("Secret from inbox B").toString("base64"));
+    expect(api.calls("GET", /^\/v1\/attachments\/msg-b1\/other\.pdf\/text$/)).toHaveLength(1);
+    expect(api.calls("GET", /^\/v1\/attachments\/msg-b1\/other\.pdf$/)).toHaveLength(0);
+  });
+
+  it("get_attachment refuses a file over the inline limit and does not embed it", async () => {
+    api.state.attachments["msg-a1/huge.bin"] = {
+      inboxId: "inbox-a",
+      text: "",
+      bytes: Buffer.from("not-the-file"),
+      contentType: "application/octet-stream",
+      contentLength: 8 * 1024 * 1024,
+    };
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await client.callTool({ name: "get_attachment", arguments: { message_id: "msg-a1", filename: "huge.bin" } });
+    expect(result.isError).toBe(true);
+    const dumped = JSON.stringify(result.content);
+    expect(dumped).toContain("get_attachment_text");
+    expect(dumped).toContain("signed download URL");
+    expect(dumped).not.toContain(Buffer.from("not-the-file").toString("base64"));
+  });
+
   it("surfaces API errors as isError results instead of protocol failures", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     const result = await call(client, "read_thread", { thread_id: "does-not-exist" });
@@ -635,6 +797,65 @@ describe("mailbox tools", () => {
     expect((await call(client, "get_domain", { domain_id: "mail.acme.com" })).isError).toBe(false);
     expect((await call(client, "verify_domain", { domain_id: "mail.acme.com" })).isError).toBe(false);
     expect(api.calls("GET", /^\/v1\/domains\/dom-1$/)).toHaveLength(1);
+  });
+
+  it("lists and resolves domains beyond the first page", async () => {
+    api.state.domains = domainRows(151);
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const listed = await call(client, "list_domains");
+    expect(listed.isError).toBe(false);
+    expect(listed.text.split("\n")).toHaveLength(151);
+    expect(listed.text).toContain("mail-151.example.com (verified) id: dom-151");
+
+    const details = await call(client, "get_domain", { domain_id: "  MAIL-151.EXAMPLE.COM  " });
+    expect(details.isError).toBe(false);
+    expect(details.text).toContain("mail-151.example.com");
+    expect(api.calls("GET", /^\/v1\/domains\/dom-151$/)).toHaveLength(1);
+
+    const verified = await call(client, "verify_domain", { domain_id: "mail-151.example.com" });
+    expect(verified.isError).toBe(false);
+    expect(verified.text).toContain("mail-151.example.com");
+    expect(api.calls("POST", /^\/v1\/domains\/dom-151\/verify$/)).toHaveLength(1);
+  });
+
+  it("infers the pod for a domain beyond the first page when creating an inbox", async () => {
+    api.state.domains = domainRows(151);
+    api.state.domains[150].podId = "pod-9";
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "create_inbox", { mailboxName: "sales", domain: "mail-151.example.com" });
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("sales@mail-151.example.com");
+    expect(api.calls("POST", /^\/v1\/inboxes$/)[0].body).toMatchObject({ podId: "pod-9" });
+  });
+
+  it.each([0, 50, 100])("finishes listing when there are exactly %i domains", async (count) => {
+    api.state.domains = domainRows(count);
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "list_domains");
+    expect(result.isError).toBe(false);
+    if (count === 0) expect(result.text).toBe("No custom domains.");
+    else expect(result.text.split("\n")).toHaveLength(count);
+  });
+
+  it("gets a domain by ID without listing domains", async () => {
+    api.state.domains = domainRows(151);
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "get_domain", { domain_id: "dom-151" });
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("mail-151.example.com");
+    expect(api.calls("GET", /^\/v1\/domains\?/)).toHaveLength(0);
+  });
+
+  it("describes a missing domain in terms of the current connection's access", async () => {
+    api.state.domains = domainRows(151);
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "get_domain", { domain_id: "missing.example.com" });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("missing.example.com");
+    expect(result.text).toContain("domains available to this connection");
+    expect(result.text).toContain("list_domains");
+    expect(result.text).not.toContain("on this account");
+    expect(api.calls("GET", /^\/v1\/domains\/[^?]+$/)).toHaveLength(0);
   });
 
   it("a new-recipient cap gives the limit, the reset, what still sends, and how to raise it", async () => {

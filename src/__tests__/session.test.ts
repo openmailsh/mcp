@@ -117,6 +117,7 @@ describe("visibleTools", () => {
         "get_draft",
         "list_unread_threads",
         "read_thread",
+        "get_attachment",
         "get_attachment_text",
         "search_mail",
         "mark_thread_read",
@@ -124,7 +125,7 @@ describe("visibleTools", () => {
         "get_domain",
       ].sort(),
     );
-    expect(tools).toHaveLength(15);
+    expect(tools).toHaveLength(16);
   });
 });
 

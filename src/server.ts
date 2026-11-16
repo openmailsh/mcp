@@ -1,10 +1,18 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, type CallToolResult, type ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { SessionContext, ToolName } from "./session.js";
-import { assertLockedInbox, lockedInboxId, visibleTools } from "./session.js";
+import { assertLockedInbox, lockedInboxId, setupToolUnavailableReason, visibleTools } from "./session.js";
 import { getDocs, searchDocs } from "./docs.js";
-import { ApiError, type MeResponse, type OpenMailApi } from "./openmail.js";
+import {
+  ATTACHMENT_INLINE_LIMIT,
+  buildAttachmentContent,
+  formatByteSize,
+  resolveMime,
+  specificMime,
+  tooLargeMessage,
+} from "./attachment.js";
+import { ApiError, PayloadTooLargeError, type MeResponse, type OpenMailApi } from "./openmail.js";
 import {
   formatApiError,
   formatDns,
@@ -19,8 +27,13 @@ import {
   type Draft,
 } from "./format.js";
 
-function text(markdown: string, isError = false) {
-  return { content: [{ type: "text" as const, text: markdown }], isError };
+function text(markdown: string, isError = false): CallToolResult {
+  return { content: [{ type: "text", text: markdown }], isError };
+}
+
+/** Same path get_attachment_text already uses, without the `/text` suffix. */
+function attachmentApiPath(messageId: string, filename: string): string {
+  return `/v1/attachments/${messageId}/${encodeURIComponent(filename)}`;
 }
 
 const CC_SCHEMA = z.array(z.string().email()).optional().describe("People to copy on the email. Every recipient sees who was copied.");
@@ -83,8 +96,21 @@ const INBOX_ID = z
 type DomainRow = { id: string; domain: string; status: string; podId?: string | null };
 
 async function listDomains(api: OpenMailApi): Promise<DomainRow[]> {
-  const listed = (await api.get("/v1/domains?limit=50")) as { data?: DomainRow[] };
-  return listed.data ?? [];
+  const domains: DomainRow[] = [];
+  const limit = 100;
+  // Name resolution and pod inference need every visible domain, not just
+  // the newest page. Keep using this credential so API scope still applies.
+  while (true) {
+    const listed = (await api.get(`/v1/domains?limit=${limit}&offset=${domains.length}`)) as {
+      data?: DomainRow[];
+      total?: number;
+    };
+    const rows = listed.data ?? [];
+    domains.push(...rows);
+    if (rows.length === 0 || (listed.total !== undefined ? domains.length >= listed.total : rows.length < limit)) {
+      return domains;
+    }
+  }
 }
 
 /**
@@ -95,7 +121,11 @@ async function resolveDomainId(api: OpenMailApi, ref: string): Promise<string> {
   if (!ref.includes(".")) return ref;
   const wanted = ref.trim().toLowerCase();
   const match = (await listDomains(api)).find((d) => d.domain.toLowerCase() === wanted);
-  if (!match) throw new Error(`There's no domain called ${ref} on this account. Check the domain list, or add it first.`);
+  if (!match) {
+    throw new Error(
+      `Couldn't find ${ref} among the domains available to this connection. Check list_domains and confirm you're connected to the right account with access to the domain. If it hasn't been added yet, add it first.`,
+    );
+  }
   return match.id;
 }
 
@@ -172,6 +202,7 @@ type ThreadMessages = {
     toAddr?: string;
     createdAt?: string;
     bodyText?: string | null;
+    bodyHtml?: string | null;
     autoReplyable?: boolean | null;
     category?: string | null;
     attachments?: Array<{ filename: string }>;
@@ -248,6 +279,7 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   create_draft: hints("Save email draft", false, false, false, false),
   list_unread_threads: read("List unread threads"),
   read_thread: read("Read thread"),
+  get_attachment: read("Get attachment"),
   get_attachment_text: read("Read attachment"),
   list_domains: read("List domains"),
   get_domain: read("Show domain DNS"),
@@ -272,17 +304,53 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   reply_to_thread: hints("Reply to thread", false, true, false, true),
 };
 
-/** Sent in `initialize`: how an agent should drive this server. */
-export const SERVER_INSTRUCTIONS = [
-  "OpenMail gives the agent its own email inboxes.",
-  "Start with auth_me to see which credential and inbox you have. No inbox yet: setup_agent_email (plan first, then execute=true).",
-  "Mailbox loop: list_unread_threads → read_thread → reply_to_thread → mark_thread_read. It lists machine mail too; only reply to threads marked autoReplyable: yes.",
-  "For the latest or most recent email, call list_unread_threads with include_read: true. It lists machine mail too, flagged autoReplyable: no.",
-  "Use reply_to_thread for replies and send_email only for new conversations. Pass inbox_id when the account has more than one inbox (list_inboxes).",
-  "Use create_draft to save an unsent email for review. list_drafts and get_draft retrieve drafts. Use send_draft with the reviewed draft updated_at when the user asks to send it. Saving a draft never sends email.",
-  "Never invent From addresses or paste API keys into chat. Custom domains: add_domain → user publishes DNS → verify_domain.",
-  "Unsure how something works: search_docs, then get_docs.",
-].join("\n");
+/** Sent in `initialize`; recommend only tools this connection can use. */
+function serverInstructions(ctx: SessionContext, allowed: Set<ToolName>): string {
+  const instructions = [
+    "OpenMail gives the agent its own email inboxes.",
+    "Only call tools returned by tools/list for this connection. Permissions can differ between connections; refresh the available tools after reconnecting.",
+    "Never invent From addresses or paste API keys into chat.",
+  ];
+  if (allowed.has("auth_me")) {
+    instructions.push("Start with auth_me to see which credential and inbox you have.");
+  }
+  if (allowed.has("setup_agent_email")) {
+    instructions.push("No inbox yet: setup_agent_email (plan first, then execute=true).");
+  } else {
+    instructions.push(setupToolUnavailableReason(ctx, "setup_agent_email")!);
+  }
+  if (allowed.has("list_unread_threads")) {
+    const loop = (["list_unread_threads", "read_thread", "reply_to_thread", "mark_thread_read"] as const)
+      .filter((name) => allowed.has(name));
+    instructions.push(`Mailbox loop: ${loop.join(" → ")}. It lists machine mail too; only reply to threads marked autoReplyable: yes.`);
+    instructions.push("For the latest or most recent email, call list_unread_threads with include_read: true. It lists machine mail too, flagged autoReplyable: no.");
+  }
+  if (allowed.has("get_attachment")) {
+    instructions.push("Attachments: get_attachment returns the file (images included). get_attachment_text returns extracted text only.");
+  }
+  if (allowed.has("send_email")) {
+    instructions.push("Use reply_to_thread for replies and send_email only for new conversations.");
+  }
+  if (allowed.has("create_draft")) {
+    instructions.push("Use create_draft to save an unsent email for review. Saving a draft never sends email.");
+  }
+  if (allowed.has("get_draft")) {
+    instructions.push("Use list_drafts and get_draft to find and review saved drafts.");
+  }
+  if (allowed.has("send_draft")) {
+    instructions.push("Use send_draft with the reviewed draft updated_at when the user asks to send it. If a draft changed, show its current recipients and content to the user for approval before retrying.");
+  }
+  if (allowed.has("list_inboxes")) {
+    instructions.push("Pass inbox_id when the account has more than one inbox (list_inboxes).");
+  }
+  if (allowed.has("add_domain")) {
+    instructions.push("Custom domains: add_domain → user publishes DNS → verify_domain.");
+  }
+  if (allowed.has("search_docs")) {
+    instructions.push("Unsure how something works: search_docs, then get_docs.");
+  }
+  return instructions.join("\n");
+}
 
 export function createMcpServer(input: {
   ctx: SessionContext;
@@ -301,14 +369,30 @@ export function createMcpServer(input: {
       websiteUrl: "https://openmail.sh",
       icons: [{ src: "https://openmail.sh/apple-touch-icon.png", mimeType: "image/png", sizes: ["180x180"] }],
     },
-    { instructions: SERVER_INSTRUCTIONS },
+    { instructions: serverInstructions(ctx, allowed) },
   );
+
+  // The SDK installs tools/call on the first registration. Wrap that callback
+  // through its public setter so hidden setup tools get an actionable error,
+  // while normal dispatch, validation, and later analytics instrumentation stay
+  // with the SDK. Do not register denied tools or access its private registry.
+  const setRequestHandler = server.server.setRequestHandler;
+  server.server.setRequestHandler = (schema, handler) => {
+    setRequestHandler.call(server.server, schema, async (request, extra) => {
+      const parsed = CallToolRequestSchema.safeParse(request);
+      if (parsed.success) {
+        const reason = setupToolUnavailableReason(ctx, parsed.data.params.name);
+        if (reason) return text(reason, true);
+      }
+      return handler(request, extra);
+    });
+  };
 
   const add = (
     name: ToolName,
     description: string,
     schema: Record<string, z.ZodTypeAny>,
-    handler: (args: Record<string, unknown>) => Promise<{ content: { type: "text"; text: string }[]; isError?: boolean }>,
+    handler: (args: Record<string, unknown>) => Promise<CallToolResult>,
   ) => {
     if (!allowed.has(name)) return;
     server.registerTool(
@@ -1056,23 +1140,65 @@ export function createMcpServer(input: {
     },
   );
 
+  const attachmentArgs = {
+    message_id: z.string().describe("The `message:` id shown under the attachment in read_thread"),
+    filename: z.string().describe("Attachment filename exactly as listed after `attachments:` in read_thread."),
+  };
+  const inlineLimit = formatByteSize(ATTACHMENT_INLINE_LIMIT);
+
+  add(
+    "get_attachment",
+    toolDesc({
+      purpose: "The attachment file itself, for a client to view or pass on.",
+      notFor: "Extracted text only (use get_attachment_text).",
+      when: "read_thread listed an attachment and you need the file — an image to look at, or a file to hand on. Use the `message:` id printed under it, not the thread id.",
+      triggers: "what's in this image, show the attachment, open the screenshot, download the file",
+      returns: `Images (png, jpeg, gif, webp) as an image content block. Other files as an embedded resource (UTF-8 text inline, otherwise a base64 blob), plus the filename, type, and size. Files over ${inlineLimit} are an error: OpenMail has no signed download URL, so use get_attachment_text for the extracted text.`,
+    }),
+    attachmentArgs,
+    async (args) => {
+      if (!api) return signIn();
+      const messageId = String(args.message_id);
+      const filename = String(args.filename);
+      const path = attachmentApiPath(messageId, filename);
+      // The download is raw bytes, so it cannot carry inboxId. The text
+      // endpoint does, and a URL-locked session still holds an account-wide
+      // key — without this check it could read another inbox's file.
+      let hintedType: string | undefined;
+      if (lockedInboxId(ctx)) {
+        const meta = (await api.get(`${path}/text`)) as { inboxId?: string; contentType?: string };
+        assertLockedInbox(ctx, meta.inboxId);
+        hintedType = meta.contentType;
+      }
+      let file;
+      try {
+        file = await api.getBinary(path, ATTACHMENT_INLINE_LIMIT);
+      } catch (err) {
+        if (err instanceof PayloadTooLargeError) {
+          const mime = resolveMime(specificMime(err.contentType) ? err.contentType : hintedType, filename);
+          return text(tooLargeMessage(filename, mime, err.size), true);
+        }
+        throw err;
+      }
+      const contentType = specificMime(file.contentType) ? file.contentType : (hintedType ?? file.contentType);
+      return buildAttachmentContent({ messageId, filename, bytes: file.bytes, contentType });
+    },
+  );
+
   add(
     "get_attachment_text",
     toolDesc({
       purpose: "LLM-ready text extracted from an attachment.",
-      notFor: "Downloading raw bytes.",
-      when: "read_thread listed an attachment; use the `message:` id printed under it, not the thread id.",
+      notFor: "The file itself. To view an image or hand the file on, use get_attachment.",
+      when: "read_thread listed an attachment and you only need its text. Use the `message:` id printed under it, not the thread id.",
       triggers: "read the pdf, extract the invoice",
       returns: "The attachment's extracted text under its filename.",
     }),
-    {
-      message_id: z.string().describe("The `message:` id shown under the attachment in read_thread"),
-      filename: z.string().describe("Attachment filename exactly as listed after `attachments:` in read_thread."),
-    },
+    attachmentArgs,
     async (args) => {
       if (!api) return signIn();
       const extracted = (await api.get(
-        `/v1/attachments/${args.message_id}/${encodeURIComponent(String(args.filename))}/text`,
+        `${attachmentApiPath(String(args.message_id), String(args.filename))}/text`,
       )) as { text?: string; filename?: string; inboxId?: string };
       assertLockedInbox(ctx, extracted.inboxId);
       return text(`# ${extracted.filename || args.filename}\n\n${extracted.text || ""}`);
@@ -1086,7 +1212,7 @@ export function createMcpServer(input: {
       notFor: "Platform omail.sh addresses.",
       when: "Checking whether DNS is green.",
       triggers: "list domains, is my domain verified",
-      returns: "Each custom domain's name, verify status, id, and pod id (if scoped). Up to 50 domains.",
+      returns: "Every custom domain available to this connection, with its name, verify status, id, and pod id (if scoped).",
     }),
     {},
     async () => {
@@ -1191,5 +1317,6 @@ export function createMcpServer(input: {
     },
   );
 
+  server.server.setRequestHandler = setRequestHandler;
   return server;
 }
