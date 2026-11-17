@@ -1046,6 +1046,36 @@ describe("email drafts", () => {
     expect(api.state.threads["thread-b1"].messages).toHaveLength(1);
   });
 
+  it("shows reply context and every saved attachment before sending a console draft", async () => {
+    const client = await connect("/mcp", await oauthToken("read send"));
+    const draft = {
+      id: "console-reply", inboxId: "inbox-a", threadId: "thread-a1", to: "reader@example.com",
+      cc: [], bcc: [], subject: "Re: Review", bodyText: "Here are both files.", bodyHtml: null,
+      createdAt: "2026-11-17T12:00:00.000Z", updatedAt: "2026-11-17T12:00:01.000Z",
+      attachments: [
+        { filename: "report.pdf", contentType: "application/pdf", sizeBytes: 12, url: "https://files.example/first?signature=one" },
+        { filename: "report.pdf", contentType: "application/pdf", sizeBytes: 24, url: "https://files.example/second?signature=two" },
+      ],
+    };
+    api.state.drafts = [draft];
+
+    const read = await call(client, "get_draft", { draft_id: draft.id });
+    expect(read.isError).toBe(false);
+    expect(read.text).toContain("reply thread: thread-a1");
+    expect(read.text).toContain("Here are both files.");
+    expect(read.text).toContain("Attachments (2):");
+    expect(read.text).toContain("1. report.pdf (application/pdf, 12 bytes)");
+    expect(read.text).toContain("2. report.pdf (application/pdf, 24 bytes)");
+    expect(read.text).toContain(draft.attachments[0].url);
+    expect(read.text).toContain(draft.attachments[1].url);
+    expect(api.calls("POST", /\/send$/)).toHaveLength(0);
+
+    const sent = await call(client, "send_draft", { draft_id: draft.id, updated_at: draft.updatedAt });
+    expect(sent.isError).toBe(false);
+    expect(api.calls("POST", /\/drafts\/[^/]+\/send$/)[0]?.body).toEqual({ updatedAt: draft.updatedAt });
+    expect(api.calls("POST", /\/inboxes\/[^/]+\/send$/)).toHaveLength(0);
+  });
+
   it("sends the reviewed saved version once and removes the draft", async () => {
     const client = await connect("/mcp", await oauthToken("read send"));
     await call(client, "create_draft", { inbox_id: "inbox-a", to: "reader@example.com", subject: "Ready", body: "Approved body" });

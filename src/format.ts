@@ -411,6 +411,8 @@ Hosted HTTP is the product. Bridge with:
 export type Draft = {
   id: string;
   inboxId: string | null;
+  threadId?: string | null;
+  attachments?: Array<{ filename: string; contentType: string; sizeBytes: number; url?: string }>;
   to: string | null;
   cc: string[];
   bcc: string[];
@@ -426,6 +428,7 @@ export function formatDraft(draft: Draft): string {
     `# Draft: ${draft.subject || "(no subject)"}`,
     `draft: ${draft.id}`,
     `sending inbox: ${draft.inboxId || "(not selected)"}`,
+    ...(draft.threadId ? [`reply thread: ${draft.threadId}`] : []),
     `To: ${draft.to || "(no recipient)"}`,
     ...(draft.cc.length ? [`CC: ${draft.cc.join(", ")}`] : []),
     ...(draft.bcc.length ? [`BCC: ${draft.bcc.join(", ")}`] : []),
@@ -434,6 +437,13 @@ export function formatDraft(draft: Draft): string {
     "Status: unsent draft",
     "",
     draft.bodyText || draft.bodyHtml || "(empty body)",
+    ...(draft.attachments?.length ? [
+      "",
+      `Attachments (${draft.attachments.length}):`,
+      ...draft.attachments.map((attachment, index) =>
+        `${index + 1}. ${attachment.filename} (${attachment.contentType}, ${attachment.sizeBytes} bytes)` +
+        (attachment.url ? `\n   download: ${attachment.url}` : "")),
+    ] : []),
   ].join("\n");
 }
 

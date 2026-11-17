@@ -653,7 +653,7 @@ export function createMcpServer(input: {
     "create_draft",
     toolDesc({
       purpose: "Save an organisation email draft for review; the sending inbox can be chosen later. Never sends email.",
-      notFor: "Sending email or changing an existing draft.",
+      notFor: "Sending email, changing an existing draft, or saving attachments or reply-thread context. Use the console to save drafts with attachments or replies.",
       when: "The user wants to save a draft or prepare mail for review in the console.",
       triggers: "save an email draft, draft an email, prepare mail for review",
       returns: "Saved draft id, inbox, recipients, subject and body. Incomplete drafts are allowed.",
@@ -720,7 +720,7 @@ export function createMcpServer(input: {
       notFor: "Reading a sent message or sending the draft.",
       when: "The user wants the contents of a saved draft.",
       triggers: "read this draft, open draft, review the draft",
-      returns: "Draft id, inbox, To/CC/BCC recipients, subject and body. Nothing is sent.",
+      returns: "Draft id, inbox, To/CC/BCC recipients, subject, body, saved reply thread and attachment metadata/download URLs. Review all saved content before sending. Nothing is sent.",
     }),
     {
       draft_id: z.string().min(1).describe("Draft id returned by create_draft or list_drafts."),
@@ -736,14 +736,14 @@ export function createMcpServer(input: {
   add(
     "send_draft",
     toolDesc({
-      purpose: "Send a saved email draft using its stored recipients and content, then remove it from Drafts on success.",
+      purpose: "Send a saved email draft using its stored recipients, content, attachments and reply thread, then remove it from Drafts on success.",
       notFor: "Saving or editing a draft, or sending without the user's instruction.",
       when: "The user asks to send a saved draft you have reviewed with get_draft.",
       triggers: "send this draft, send the saved email",
       returns: "Sent message and thread ids. Failed sends retain the draft. A changed draft must be reviewed again.",
     }),
     {
-      inbox_id: z.string().min(1).optional().describe("Sending inbox. Omit to use the draft's saved sender; required when no sender has been selected."),
+      inbox_id: z.string().min(1).optional().describe("Sending inbox. Omit to use the draft's saved sender; required when no sender has been selected. Reply drafts must keep their original inbox."),
       draft_id: z.string().min(1).describe("Saved draft id from get_draft."),
       updated_at: z.string().datetime({ offset: true }).describe("Exact updated_at from get_draft. Read and review the draft before sending; do not substitute a newly fetched version without review."),
     },

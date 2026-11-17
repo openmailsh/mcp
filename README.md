@@ -39,7 +39,9 @@ Keys and transcripts: over OAuth (Claude, Cursor sign-in) `setup_agent_email` an
 
 Use `create_draft` to save an unsent email, then `list_drafts` and `get_draft` to review it. Drafts belong to the organisation. Sending inbox, recipient, subject and body are optional; account-wide connections can save drafts before an inbox exists. `list_drafts` lists all accessible drafts and accepts an optional inbox filter; `get_draft` needs only `draft_id`. Draft creation requires OAuth `send` scope (or an API key) and is unavailable on read-only connections. Reading drafts is available on read-only connections. Inbox locks apply to every draft tool. Saving a draft never sends it; the console can select a sending inbox, edit recipients and subject, and send drafts.
 
-To send a saved draft, read it with `get_draft`, then call `send_draft` with its `draft_id`, exact `updated_at`, and `inbox_id` to select a sender (or omit the inbox to use the saved selection). Sending requires the user’s instruction and OAuth `send` scope (or an API key). Read-only connections cannot send. Stale versions must be reviewed again; failed sends retain the draft.
+`create_draft` saves content through the public API; attachment uploads and saving replies are available in the console. `get_draft` includes any saved reply thread and every attachment’s filename, type, size and download URL. Saved reply drafts retain their original inbox. All saved draft bodies stay read-only.
+
+To send a saved draft, read it with `get_draft`, then call `send_draft` with its `draft_id`, exact `updated_at`, and `inbox_id` to select a sender (or omit the inbox to use the saved selection). Sending requires the user’s instruction and OAuth `send` scope (or an API key). Read-only connections cannot send. Sending preserves the stored attachments and reply threading. Stale versions must be reviewed again; failed sends retain the draft.
 
 ## Plugin packages
 
