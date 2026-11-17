@@ -148,49 +148,51 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
 
     if (method === "GET" && path === "/v1/inboxes") return json(200, { data: state.inboxes });
 
-    if (method === "POST" && (m = path.match(/^\/v1\/inboxes\/([^/]+)\/drafts\/([^/]+)\/send$/))) {
-      const inboxId = decodeURIComponent(m[1]);
-      const draftId = decodeURIComponent(m[2]);
-      const draft = state.drafts?.find((row) => row.inboxId === inboxId && row.id === draftId);
+    const draftScope = me.apiKeyScope === "account" ? null : me.apiKeyScope;
+    const visibleDraft = (draft: Draft) => !draftScope || (!!draft.inboxId &&
+      (!draftScope.inboxId || draft.inboxId === draftScope.inboxId) &&
+      (!draftScope.podId || state.inboxes.find((i) => i.id === draft.inboxId)?.podId === draftScope.podId));
+    if (method === "POST" && (m = path.match(/^\/v1\/drafts\/([^/]+)\/send$/))) {
+      const draftId = decodeURIComponent(m[1]);
+      const draft = state.drafts?.find((row) => row.id === draftId);
       if (!draft) return json(404, { error: "not_found", message: "Draft not found" });
-      if ((body as { updatedAt?: string })?.updatedAt !== draft.updatedAt) {
-        return json(409, { error: "draft_changed", message: "This draft changed. Refresh before continuing." });
-      }
-      if (!draft.to || !draft.subject || (!draft.bodyText && !draft.bodyHtml)) {
-        return json(400, { error: "incomplete_draft", message: "Complete the draft before sending." });
-      }
+      if (!visibleDraft(draft)) return json(403, { error: "forbidden" });
+      const input = body as { updatedAt?: string; inboxId?: string };
+      if (input.updatedAt !== draft.updatedAt) return json(409, { error: "draft_changed", message: "This draft changed. Refresh before continuing." });
+      const inboxId = input.inboxId ?? draft.inboxId;
+      if (!inboxId) return json(400, { error: "inbox_required", message: "Select a sending inbox." });
+      if (!visibleDraft({ ...draft, inboxId })) return json(403, { error: "forbidden" });
+      if (!draft.to || !draft.subject || (!draft.bodyText && !draft.bodyHtml)) return json(400, { error: "incomplete_draft", message: "Complete the draft before sending." });
       if (state.draftSendFailure) {
-        if (state.draftSendFailure.body.error === "send_failed") {
-          draft.updatedAt = new Date(Math.max(Date.now(), Date.parse(draft.updatedAt) + 1)).toISOString();
-        }
+        if (state.draftSendFailure.body.error === "send_failed") draft.updatedAt = new Date(Math.max(Date.now(), Date.parse(draft.updatedAt) + 1)).toISOString();
         return json(state.draftSendFailure.status, state.draftSendFailure.body);
       }
       state.drafts = state.drafts!.filter((row) => row.id !== draftId);
       return json(200, { messageId: `msg-${++seq}`, threadId: `thread-${seq}`, status: "sent" });
     }
-
-    if ((m = path.match(/^\/v1\/inboxes\/([^/]+)\/drafts(?:\/([^/]+))?$/))) {
-      const inboxId = decodeURIComponent(m[1]);
-      const draftId = m[2] ? decodeURIComponent(m[2]) : undefined;
-      if (!state.inboxes.some((inbox) => inbox.id === inboxId)) return json(404, { error: "not_found", message: "Inbox not found" });
+    if ((m = path.match(/^\/v1\/drafts(?:\/([^/]+))?$/))) {
+      const draftId = m[1] ? decodeURIComponent(m[1]) : undefined;
       const drafts = state.drafts ??= [];
       if (method === "POST" && !draftId) {
-        const b = (body ?? {}) as { to?: string; cc?: string[]; bcc?: string[]; subject?: string; body?: string; bodyHtml?: string };
+        const b = (body ?? {}) as { inboxId?: string; to?: string; cc?: string[]; bcc?: string[]; subject?: string; body?: string; bodyHtml?: string };
         const draft: Draft = {
-          id: `draft-${++seq}`, inboxId, to: b.to ?? null, cc: b.cc ?? [], bcc: b.bcc ?? [],
+          id: `draft-${++seq}`, inboxId: b.inboxId ?? null, to: b.to ?? null, cc: b.cc ?? [], bcc: b.bcc ?? [],
           subject: b.subject ?? "", bodyText: b.body ?? null, bodyHtml: b.bodyHtml ?? null,
           createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
         };
+        if (!visibleDraft(draft)) return json(403, { error: "forbidden" });
         drafts.push(draft);
         return json(201, draft);
       }
       if (method === "GET" && draftId) {
-        const draft = drafts.find((row) => row.inboxId === inboxId && row.id === draftId);
+        const draft = drafts.find((row) => row.id === draftId);
+        if (draft && !visibleDraft(draft)) return json(403, { error: "forbidden" });
         return draft ? json(200, draft) : json(404, { error: "not_found", message: "Draft not found" });
       }
       if (method === "GET") {
         const q = url.searchParams.get("q")?.toLowerCase();
-        const matches = drafts.filter((row) => row.inboxId === inboxId && (!q || [row.to, row.subject, row.bodyText, row.bodyHtml].some((field) => field?.toLowerCase().includes(q))));
+        const inboxId = url.searchParams.get("inboxId");
+        const matches = drafts.filter((row) => visibleDraft(row) && (!inboxId || row.inboxId === inboxId) && (!q || [row.to, row.subject, row.bodyText, row.bodyHtml].some((field) => field?.toLowerCase().includes(q))));
         const offset = Number(url.searchParams.get("offset") ?? 0);
         const limit = Number(url.searchParams.get("limit") ?? 50);
         return json(200, { data: matches.slice(offset, offset + limit), total: matches.length });

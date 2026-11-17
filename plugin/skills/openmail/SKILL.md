@@ -12,7 +12,7 @@ OpenMail gives this agent its own inbox. The MCP connector is already signed in;
 
 Run `auth_me` once per conversation. It tells you which organisation you are in and whether you can see one inbox or all of them. If `list_inboxes` is empty, call `setup_agent_email` with `execute: true`; the new address is live immediately.
 
-Several inboxes? Pass `inbox_id` on every send and read. Never guess which one the user means; ask.
+Several inboxes? Pass `inbox_id` on inbox-specific mail operations and when choosing a draft sender. Draft listing and retrieval are organisation-level; `get_draft` only needs `draft_id`. Never guess which one the user means; ask.
 
 ## Check for new mail
 
@@ -24,9 +24,9 @@ Attachments show a `message:` id under the filename in `read_thread`. Pass that 
 
 ## Drafts
 
-When asked to save or prepare an unsent email, use `create_draft`. Recipient, subject and body may be omitted for incomplete drafts. `list_drafts` finds saved drafts and `get_draft` reads their content. Saving a draft never sends email. Return the saved draft ID and content so the user can review it. The console can edit recipients and send drafts; subject and body remain read-only. Sending is a separate action and needs the user’s instruction.
+When asked to save or prepare an unsent email, use `create_draft`. The sending inbox, recipient, subject and body may be omitted for incomplete drafts. Account-wide connections can create drafts before any inbox exists; scoped keys need an inbox within their scope. `list_drafts` is paginated across all accessible drafts, with an optional inbox filter. `list_drafts` finds saved drafts and `get_draft` reads their content. Saving a draft never sends email. Return the saved draft ID and content so the user can review it. The console can choose the sending inbox, edit recipients and send drafts; subject and body remain read-only. Sending is a separate action and needs the user’s instruction.
 
-To send a saved draft, read it with `get_draft`, then call `send_draft` with its `draft_id` and exact `updated_at`. Creation and sending require OAuth `send` scope (or an API key); read-only connections can list and read drafts. Use `send_draft` for saved drafts so delivery uses their stored recipients and content and removes them only on success. Do not copy the draft into `send_email`. If the version is stale, show the changed recipients or content for review before retrying; failed sends retain the draft.
+To send a saved draft, read it with `get_draft`, then call `send_draft` with its `draft_id` and exact `updated_at`. Set `inbox_id` to choose the sending inbox, or omit it to use the saved selection. If no sender is selected, ask which inbox to use before sending. Creation and sending require OAuth `send` scope (or an API key); read-only connections can list and read drafts. Use `send_draft` for saved drafts so delivery uses their stored recipients and content and removes them only on success. Do not copy the draft into `send_email`. If the version is stale, show the changed recipients or content for review before retrying; failed sends retain the draft.
 
 ## Sending
 

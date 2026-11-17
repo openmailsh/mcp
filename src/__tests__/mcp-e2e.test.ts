@@ -52,7 +52,7 @@ function seed(): FakeState {
       },
     },
     inboxes: [
-      { id: "inbox-a", address: "a@omail.sh", displayName: "A" },
+      { id: "inbox-a", address: "a@omail.sh", displayName: "A", podId: "pod-1" },
       { id: "inbox-b", address: "b@omail.sh", displayName: "B" },
     ],
     threads: {
@@ -1032,8 +1032,8 @@ describe("email drafts", () => {
     });
     expect(result.isError).toBe(false);
     expect(result.text).toContain("No email was sent");
-    expect(api.calls("POST", /^\/v1\/inboxes\/inbox-b\/drafts$/)[0]?.body).toEqual({
-      to: "reader@example.com", cc: ["copy@example.com"], bcc: ["private@example.com"],
+    expect(api.calls("POST", /^\/v1\/drafts$/)[0]?.body).toEqual({
+      inboxId: "inbox-b", to: "reader@example.com", cc: ["copy@example.com"], bcc: ["private@example.com"],
       subject: "Review proposal", body: "Plain proposal", bodyHtml: "<p>HTML proposal</p>",
     });
     const draft = api.state.drafts![0];
@@ -1055,7 +1055,7 @@ describe("email drafts", () => {
     expect(result.isError).toBe(false);
     expect(result.text).toContain("Draft sent.");
     expect(result.text).toContain("status: sent");
-    expect(api.calls("POST", /\/drafts\/[^/]+\/send$/)[0]?.body).toEqual({ updatedAt: draft.updatedAt });
+    expect(api.calls("POST", /\/drafts\/[^/]+\/send$/)[0]?.body).toEqual({ updatedAt: draft.updatedAt, inboxId: "inbox-a" });
     expect(api.state.drafts).toHaveLength(0);
     expect((await call(client, "send_draft", args)).isError).toBe(true);
   });
@@ -1139,7 +1139,7 @@ describe("email drafts", () => {
     expect(page.text).toContain("1–1 of 2");
     expect(page.text).toContain("offset 1");
     expect(page.text).not.toContain("Other");
-    expect(api.calls("GET", /drafts\?limit=1&offset=0&q=A\+%26\+B$/)).toHaveLength(1);
+    expect(api.calls("GET", /drafts\?limit=1&offset=0&q=A\+%26\+B&inboxId=inbox-a$/)).toHaveLength(1);
     const next = await call(client, "list_drafts", { inbox_id: "inbox-a", query: "A & B", limit: 1, offset: 1 });
     expect(next.text).toContain("A & B second");
   });
@@ -1167,7 +1167,7 @@ describe("email drafts", () => {
     expect(api.calls("POST", /drafts$/)).toHaveLength(0);
   });
 
-  it.each(["create_draft", "list_drafts", "get_draft", "send_draft"])("%s refuses another inbox before touching its API", async (tool) => {
+  it.each(["create_draft", "list_drafts", "send_draft"])("%s refuses another inbox before touching its API", async (tool) => {
     const client = await connect("/mcp", INBOX_A_KEY);
     const result = await call(client, tool, { inbox_id: "inbox-b", draft_id: "other-draft", updated_at: new Date().toISOString() });
     expect(result.isError).toBe(true);
@@ -1183,6 +1183,36 @@ describe("email drafts", () => {
     expect((await call(client, "send_draft", { draft_id: "draft-1", updated_at: "invalid" })).isError).toBe(true);
     expect((await call(client, "list_drafts", { limit: 101 })).isError).toBe(true);
     expect(api.requests.filter((request) => request.path.includes("/drafts"))).toHaveLength(0);
+  });
+
+  it("creates drafts without an inbox and lists them across the organisation", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    await call(client, "create_draft", { to: "reader@example.com", subject: "Unassigned", body: "Review me" });
+    await call(client, "create_draft", { inbox_id: "inbox-b", subject: "Assigned" });
+    const draft = api.state.drafts![0];
+    expect(draft.inboxId).toBeNull();
+    expect(api.calls("GET", /^\/v1\/inboxes/)).toHaveLength(0);
+    const listed = await call(client, "list_drafts");
+    expect(listed.text).toContain("Unassigned");
+    expect(listed.text).toContain("Assigned");
+    const read = await call(client, "get_draft", { draft_id: draft.id });
+    expect(read.text).toContain("(not selected)");
+    const sent = await call(client, "send_draft", { draft_id: draft.id, updated_at: draft.updatedAt, inbox_id: "inbox-b" });
+    expect(sent.isError).toBe(false);
+    expect(api.calls("POST", /\/drafts\/[^/]+\/send$/)[0]?.body).toEqual({ updatedAt: draft.updatedAt, inboxId: "inbox-b" });
+  });
+
+  it("enforces URL inbox locks before showing or sending another inbox's draft", async () => {
+    const account = await connect("/mcp", ACCOUNT_KEY);
+    await call(account, "create_draft", { inbox_id: "inbox-b", to: "reader@example.com", subject: "Private", body: "Private content" });
+    const draft = api.state.drafts![0];
+    const locked = await connect("/mcp/inbox/inbox-a", ACCOUNT_KEY);
+    const read = await call(locked, "get_draft", { draft_id: draft.id });
+    expect(read.isError).toBe(true);
+    expect(read.text).not.toContain("Private content");
+    const send = await call(locked, "send_draft", { draft_id: draft.id, updated_at: draft.updatedAt });
+    expect(send.isError).toBe(true);
+    expect(api.calls("POST", /\/drafts\/[^/]+\/send$/)).toHaveLength(0);
   });
 
   it("marks saving drafts as a non-destructive write without external delivery", async () => {

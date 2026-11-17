@@ -59,7 +59,7 @@
               "description": "Save an unsent draft",
               "prompt": "Save a draft to support@openmail.to with subject Review test and body Please review this proposal. Do not send it.",
               "tools_triggered": "create_draft",
-              "expected_behavior": "Saves the draft, returns its ID and content, and confirms that no email was sent. Does not call send_email or send_draft."
+              "expected_behavior": "Saves an organisation draft without requiring a sending inbox, returns its ID and content, and confirms that no email was sent. Does not call send_email or send_draft."
             },
             {
               "description": "Review saved drafts",
@@ -71,7 +71,7 @@
               "description": "Send a reviewed draft",
               "prompt": "Send the Review test draft I just reviewed and approved.",
               "tools_triggered": "get_draft, send_draft",
-              "expected_behavior": "Checks the saved recipients and content still match the approved version, then sends using draft_id and its exact updated_at. If the draft changed, shows the changes and obtains approval before sending. Reports the message and thread IDs on success."
+              "expected_behavior": "Checks the saved recipients and content still match the approved version, then sends using draft_id, its exact updated_at, and the selected sending inbox. If no sender is selected, asks which inbox to use. If the draft changed, shows the changes and obtains approval before sending. Reports the message and thread IDs on success."
             },
             {
               "description": "Search past mail",
@@ -109,7 +109,7 @@
         "commerce": false
       },
       "publication": {
-        "release_notes": "Adds create_draft, list_drafts, get_draft and send_draft. Save unsent mail, review recipients and content, then send the reviewed version with send permission. Read-only connections can view drafts; stale versions require another review and failed sends retain the draft."
+        "release_notes": "Adds create_draft, list_drafts, get_draft and send_draft. Save organisation drafts before choosing a sender, list with pagination, review recipients and content, then send the reviewed version with send permission. Read-only connections can view drafts; stale versions require another review and failed sends retain the draft."
       }
     }
   }
