@@ -30,6 +30,33 @@ export const draftFields = z.object({
 
 export type DraftInput = Omit<z.infer<typeof draftFields>, "inbox_id"> & { inbox_id?: string };
 
+export const editDraftFields = z.object({
+  draft_id: z.string().min(1).describe("Saved draft id from get_draft."),
+  updated_at: z.string().datetime({ offset: true }).describe("Exact updated_at from the draft being edited. Never substitute a newer version without reconciling the requested changes."),
+  inbox_id: z.string().min(1).optional().describe("Optional ownership check. Must match the original sending inbox."),
+  to: z.string().email().max(254).nullable().optional().describe("Replace the recipient, or null to clear it."),
+  cc: z.array(z.string().email().max(254)).max(100).optional().describe("Replace copy recipients; [] clears them."),
+  bcc: z.array(z.string().email().max(254)).max(100).optional().describe("Replace blind-copy recipients; [] clears them."),
+  subject: z.string().max(998).optional().describe("Replace the subject; empty string clears it. Reply drafts must retain their original subject."),
+  body: z.string().max(100000).optional().describe("Replacement plain text; empty string clears it. Clears old HTML unless body_html is also supplied. Omit both fields to preserve the body."),
+  body_html: z.string().max(500000).nullable().optional().describe("Replacement HTML, or null for plain text only. Requires body with the replacement plain-text version. Retain cid: references for inline images you want to keep."),
+});
+export type EditDraftInput = z.infer<typeof editDraftFields>;
+
+export function editDraftPayload(args: EditDraftInput, inboxId?: string) {
+  if (args.body_html !== undefined && args.body === undefined) throw new Error("body_html requires body with the replacement plain-text version.");
+  if ([args.to, args.cc, args.bcc, args.subject, args.body].every(value => value === undefined)) throw new Error("Supply at least one draft content change.");
+  return {
+    updatedAt: args.updated_at,
+    ...(inboxId ? { inboxId } : {}),
+    ...(args.to !== undefined ? { to: args.to } : {}),
+    ...(args.cc !== undefined ? { cc: args.cc } : {}),
+    ...(args.bcc !== undefined ? { bcc: args.bcc } : {}),
+    ...(args.subject !== undefined ? { subject: args.subject } : {}),
+    ...(args.body !== undefined ? { bodyText: args.body, bodyHtml: args.body_html ?? null } : {}),
+  };
+}
+
 export function draftPayload(args: DraftInput, inboxId: string): FormData | Record<string, string | string[] | undefined> {
   const fields = {
     inboxId,

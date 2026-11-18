@@ -212,6 +212,20 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
         if (draft && !visibleDraft(draft)) return json(403, { error: "forbidden" });
         return draft ? json(200, draft) : json(404, { error: "not_found", message: "Draft not found" });
       }
+      if (method === "PATCH" && draftId) {
+        const draft = drafts.find(row => row.id === draftId);
+        if (!draft) return json(404, { error: "not_found", message: "Draft not found" });
+        if (!visibleDraft(draft)) return json(403, { error: "forbidden" });
+        const input = body as Partial<Draft>;
+        if (input.updatedAt !== draft.updatedAt) return json(409, { error: "draft_changed", message: "This draft changed. Refresh before continuing." });
+        if (input.inboxId && input.inboxId !== draft.inboxId) return json(400, { error: "draft_inbox_locked" });
+        if (state.draftSendFailure?.body.error === "draft_sending") return json(409, state.draftSendFailure.body);
+        for (const field of ["to", "cc", "bcc", "subject", "bodyText", "bodyHtml"] as const) {
+          if (input[field] !== undefined) Object.assign(draft, { [field]: input[field] });
+        }
+        draft.updatedAt = new Date(Math.max(Date.now(), Date.parse(draft.updatedAt) + 1)).toISOString();
+        return json(200, draft);
+      }
       if (method === "GET") {
         const q = url.searchParams.get("q")?.toLowerCase();
         const inboxId = url.searchParams.get("inboxId");
