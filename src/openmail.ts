@@ -52,10 +52,10 @@ export function createOpenMailApi(
         Authorization: `Bearer ${token}`,
         // Only claim JSON when there is a body: the API rejects a JSON
         // content type with an empty body (DELETE), as 400 empty_body.
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...(body === undefined || body instanceof FormData ? {} : { "Content-Type": "application/json" }),
         "x-openmail-client": "mcp",
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body instanceof FormData ? body : JSON.stringify(body),
     };
     try {
       return await fetch(`${root}${path}`, init);

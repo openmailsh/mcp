@@ -3,6 +3,7 @@ import { CallToolRequestSchema, type CallToolResult, type ToolAnnotations } from
 import { z } from "zod";
 import type { SessionContext, ToolName } from "./session.js";
 import { assertLockedInbox, lockedInboxId, setupToolUnavailableReason, visibleTools } from "./session.js";
+import { draftFields, draftPayload, type DraftInput } from "./draft.js";
 import { getDocs, searchDocs } from "./docs.js";
 import {
   ATTACHMENT_INLINE_LIMIT,
@@ -22,6 +23,9 @@ import {
   formatThread,
   formatSearch,
   formatTimestamp,
+  formatDraft,
+  formatDrafts,
+  type Draft,
 } from "./format.js";
 
 function text(markdown: string, isError = false): CallToolResult {
@@ -270,6 +274,10 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   auth_me: read("Who am I"),
   list_inboxes: read("List inboxes"),
   get_inbox: read("Show inbox"),
+  list_drafts: read("List email drafts"),
+  get_draft: read("Read email draft"),
+  send_draft: hints("Send saved draft", false, true, true, true),
+  create_draft: hints("Save email draft", false, false, false, true),
   list_unread_threads: read("List unread threads"),
   read_thread: read("Read thread"),
   get_attachment: read("Get attachment"),
@@ -323,6 +331,15 @@ function serverInstructions(ctx: SessionContext, allowed: Set<ToolName>): string
   }
   if (allowed.has("send_email")) {
     instructions.push("Use reply_to_thread for replies and send_email only for new conversations.");
+  }
+  if (allowed.has("create_draft")) {
+    instructions.push("Use create_draft to save an unsent email in its sending inbox. Pass thread_id for a reply or source_thread_id alone for a forward. Saving a draft never sends email.");
+  }
+  if (allowed.has("get_draft")) {
+    instructions.push("Use list_drafts and get_draft to find and review saved drafts.");
+  }
+  if (allowed.has("send_draft")) {
+    instructions.push("Use send_draft with the reviewed draft updated_at when the user asks to send it. If a draft changed, show its current recipients and content to the user for approval before retrying.");
   }
   if (allowed.has("list_inboxes")) {
     instructions.push("Pass inbox_id when the account has more than one inbox (list_inboxes).");
@@ -630,6 +647,117 @@ export function createMcpServer(input: {
       return text(
         `Inbox-scoped key (shown once): \`${key.token}\`\nStore it in the agent's env (OPENMAIL_API_KEY); do not paste it into replies or docs.`,
       );
+    },
+  );
+
+  const lockedDraftInbox = lockedInboxId(ctx);
+  add(
+    "create_draft",
+    toolDesc({
+      purpose: "Save an unsent email in its sending inbox, optionally with attachments and thread context.",
+      notFor: "Sending email or editing a saved draft. Use the console for edits.",
+      when: "The user wants to save a draft or prepare mail for review in the console.",
+      triggers: "save an email draft, draft an email, prepare mail for review",
+      returns: "Saved draft id, inbox, recipients, subject and body. Incomplete drafts are allowed.",
+    }),
+    {
+      ...draftFields.shape,
+      inbox_id: lockedDraftInbox ? draftFields.shape.inbox_id.optional() : draftFields.shape.inbox_id,
+    },
+    async (args) => {
+      if (!api) return signIn();
+      const input = args as DraftInput;
+      const inboxId = input.inbox_id ?? lockedDraftInbox;
+      if (!inboxId) throw new Error("Select the sending inbox before creating a draft.");
+      assertLockedInbox(ctx, inboxId);
+      const draft = await api.post("/v1/drafts", draftPayload(input, inboxId)) as Draft;
+      return text(`Saved draft. No email was sent.\n\n${formatDraft(draft)}`);
+    },
+  );
+
+  add(
+    "list_drafts",
+    toolDesc({
+      purpose: "List saved, unsent email drafts across accessible inboxes. Combine inbox, pod, source thread and text filters.",
+      notFor: "Received or sent messages, or editing drafts.",
+      when: "The user wants to review draft emails or find a draft id.",
+      triggers: "show my drafts, list draft emails, find a draft",
+      returns: "Draft ids, recipients and subjects, total count and pagination offset.",
+    }),
+    {
+      inbox_id: z.string().min(1).optional().describe("Filter by the owning inbox. Inbox locks always apply."),
+      pod_id: z.string().min(1).optional().describe("Filter by the pod containing the owning inbox."),
+      source_thread_id: z.string().min(1).optional().describe("Filter by the conversation that a reply or forward was composed from."),
+      limit: z.number().int().min(1).max(100).optional().describe("Page size, defaults to 50."),
+      offset: z.number().int().min(0).optional().describe("Number of drafts to skip, defaults to 0."),
+      query: z.string().max(1000).optional().describe("Search draft recipient, subject or plain-text body."),
+    },
+    async (args) => {
+      if (!api) return signIn();
+      const requestedInbox = args.inbox_id as string | undefined;
+      if (requestedInbox) assertLockedInbox(ctx, requestedInbox);
+      const inboxId = requestedInbox ?? lockedInboxId(ctx) ?? undefined;
+      const offset = (args.offset as number | undefined) ?? 0;
+      const query = new URLSearchParams({ limit: String(args.limit ?? 50), offset: String(offset) });
+      if (args.query) query.set("q", String(args.query));
+      if (inboxId) query.set("inboxId", inboxId);
+      if (args.pod_id) query.set("podId", String(args.pod_id));
+      if (args.source_thread_id) query.set("sourceThreadId", String(args.source_thread_id));
+      const drafts = (await api.get(`/v1/drafts?${query}`)) as { data: Draft[]; total: number };
+      return text(formatDrafts(drafts.data, drafts.total, inboxId, offset));
+    },
+  );
+
+  add(
+    "get_draft",
+    toolDesc({
+      purpose: "Read a saved email draft without changing it.",
+      notFor: "Reading a sent message or sending the draft.",
+      when: "The user wants the contents of a saved draft.",
+      triggers: "read this draft, open draft, review the draft",
+      returns: "Draft id, inbox, To/CC/BCC recipients, subject, body, reply and source thread ids, HTML, attachment metadata, inline content ids and download URLs. Review all saved content before sending. Nothing is sent.",
+    }),
+    {
+      draft_id: z.string().min(1).describe("Draft id returned by create_draft or list_drafts."),
+    },
+    async (args) => {
+      if (!api) return signIn();
+      const draft = (await api.get(`/v1/drafts/${encodeURIComponent(String(args.draft_id))}`)) as Draft;
+      assertLockedInbox(ctx, draft.inboxId);
+      return text(formatDraft(draft));
+    },
+  );
+
+  add(
+    "send_draft",
+    toolDesc({
+      purpose: "Send a saved email draft using its stored recipients, content, attachments and reply thread, then remove it from Drafts on success.",
+      notFor: "Saving or editing a draft, or sending without the user's instruction.",
+      when: "The user asks to send a saved draft you have reviewed with get_draft.",
+      triggers: "send this draft, send the saved email",
+      returns: "Sent message and thread ids. Failed sends retain the draft. A changed draft must be reviewed again.",
+    }),
+    {
+      inbox_id: z.string().min(1).optional().describe("Optional check that the saved draft belongs to this inbox. A draft always sends from its owning inbox."),
+      draft_id: z.string().min(1).describe("Saved draft id from get_draft."),
+      updated_at: z.string().datetime({ offset: true }).describe("Exact updated_at from get_draft. Read and review the draft before sending; do not substitute a newly fetched version without review."),
+    },
+    async (args) => {
+      if (!api) return signIn();
+      const requestedInbox = args.inbox_id as string | undefined;
+      if (requestedInbox) assertLockedInbox(ctx, requestedInbox);
+      const inboxId = requestedInbox ?? lockedInboxId(ctx) ?? undefined;
+      // A URL inbox lock can sit on top of an account-wide credential. Check
+      // ownership before sending, without replacing the caller's reviewed version.
+      if (ctx.inboxId) {
+        const draft = await api.get(`/v1/drafts/${encodeURIComponent(String(args.draft_id))}`) as Draft;
+        assertLockedInbox(ctx, draft.inboxId);
+      }
+      const sent = await api.post(`/v1/drafts/${encodeURIComponent(String(args.draft_id))}/send`, {
+        updatedAt: args.updated_at,
+        ...(inboxId ? { inboxId } : {}),
+      }) as { messageId: string; threadId: string; status: string };
+      return text(`Draft sent.\nmessage: ${sent.messageId}\nthread: ${sent.threadId}\nstatus: ${sent.status}`);
     },
   );
 

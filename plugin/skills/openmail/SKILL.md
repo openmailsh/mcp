@@ -1,6 +1,6 @@
 ---
 name: openmail
-description: Email for the agent through the OpenMail MCP connector. Use when the user wants to contact a person, company, or service by email, wait for or check on a reply, sign up for something and confirm the account, receive a verification code or magic link, handle an inbound support request, or anything else that happens over email, even when they say "reach out", "contact support", "sign up", "did they answer", or "subscribe" rather than "email". Also use when the agent needs an address of its own.
+description: Email for the agent through the OpenMail MCP connector. Use when the user wants to save, find, review, or send an email draft, contact a person, company, or service by email, wait for or check on a reply, sign up for something and confirm the account, receive a verification code or magic link, handle an inbound support request, or anything else that happens over email, even when they say "reach out", "contact support", "sign up", "did they answer", or "subscribe" rather than "email". Also use when the agent needs an address of its own.
 license: MIT
 ---
 
@@ -12,7 +12,7 @@ OpenMail gives this agent its own inbox. The MCP connector is already signed in;
 
 Run `auth_me` once per conversation. It tells you which organisation you are in and whether you can see one inbox or all of them. If `list_inboxes` is empty, call `setup_agent_email` with `execute: true`; the new address is live immediately.
 
-Several inboxes? Pass `inbox_id` on every send and read. Never guess which one the user means; ask.
+If several inboxes are available, pass `inbox_id` on inbox-specific mail operations. Ask the user if the intended inbox is unclear.
 
 ## Check for new mail
 
@@ -22,11 +22,21 @@ Before you act on a thread, `read_thread` the whole of it. Replies written from 
 
 Attachments show a `message:` id under the filename in `read_thread`. Pass that id, not the thread id, to `get_attachment` (the file) or `get_attachment_text` (extracted text). Use `get_attachment` to look at an image or hand a file on: images come back as image content, other files as an embedded resource. Files over 4 MB are refused — there is no signed download link — and `get_attachment_text` is the fallback for PDF, Office, and OCR text.
 
+## Drafts
+
+When asked to prepare an unsent email, use `create_draft` with the sending `inbox_id`. A connection locked to an inbox supplies that ID automatically. If the intended inbox is unclear, look it up with `list_inboxes` or ask the user. Each draft keeps its original sending inbox. Recipients, subject and body are optional at creation. Return the saved draft ID and content for review. The console allows editing saved drafts.
+
+For replies, pass `thread_id` so the draft inherits the subject and stays in the thread when sent. For a forward or new message composed from a conversation, pass `source_thread_id` alone. Both appear on the source thread in the console. Pass `body_html` for rich text. OpenMail imports embedded and public HTTP(S) raster images. Attach files with `attachments` (`filename`, `content_type`, `content_base64`). Upload inline images with `inline_images` (`content_id`, `content_type`, `content_base64`), referencing each `inline-<UUID>@openmail` ID with `cid:` in the HTML. Keep the entire MCP request under 4 MiB.
+
+Use `list_drafts` across all accessible inboxes or combine `inbox_id`, `pod_id`, `source_thread_id`, text `query`, `limit` and `offset`. Use `get_draft` to review the sending inbox, recipients, subject, text and HTML, reply/source thread and attachments, including inline content IDs and download URLs when available.
+
+To send an approved draft, use `send_draft` with its `draft_id` and exact reviewed `updated_at`. Omit `inbox_id` or pass the owning inbox as a check. Creation and sending require a writable connection and OAuth `send` scope when using OAuth. Read-only connections can list and read. A successful send preserves attachments and reply threading and removes the draft. If the version is stale, review the current content with the user before retrying. A failed or pending send retains the draft. Never bypass the saved version by copying it into `send_email`.
+
 ## Sending
 
 Replying to something you received: `reply_to_thread` with the `thread_id`, always. It keeps the headers intact so the recipient's mail client shows one conversation. Starting a conversation that does not exist yet: `send_email` with `to`, `subject`, `body`.
 
-Before you call either one, show the user the recipient and the full body exactly as it will go, and wait for their go. Do not call the tool and let the permission prompt do the asking; the prompt shows raw arguments, your draft shows the mail. Both tools are flagged destructive, so the client asks once more at send time. One recipient per message; use `cc` for others.
+For `send_email`, `reply_to_thread`, and `send_draft`, show the recipients (including Cc/Bcc), subject, full body, and any saved attachments and reply thread and obtain approval before sending, unless the user has already approved that exact content and recipients in this conversation. Preparing or reviewing a draft alone does not authorize sending. These tools are flagged destructive; do not rely on a client permission prompt to convey the message content. One To recipient per message; use `cc` or `bcc` for others.
 
 Do not invent a From address. Mail leaves from the inbox you pass (or the only inbox you have); if the user wants a different sender, that is a different inbox or a custom domain.
 

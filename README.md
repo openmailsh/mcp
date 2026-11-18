@@ -35,6 +35,22 @@ Keys and transcripts: over OAuth (Claude, Cursor sign-in) `setup_agent_email` an
 
 **stdio-only clients:** `npx -y mcp-remote https://mcp.openmail.sh/mcp`
 
+## Drafts
+
+Use `create_draft` with the sending `inbox_id`. A connection locked to an inbox supplies its own ID. The owner is fixed when the draft is saved. Recipients, subject and body can be filled in later in the console. For a reply, pass `thread_id` to inherit the subject and send in that thread. For a forward, pass only `source_thread_id` to associate the draft with the original conversation and start a new thread on send.
+
+`list_drafts` lists all drafts visible to the connection. Combine `inbox_id`, `pod_id`, `source_thread_id` and `query` to narrow the results. Use `limit` and `offset` to page through matches. The console also shows drafts in each inbox, in the main Drafts view, and on their source threads.
+
+`create_draft` accepts `body` and `body_html`. OpenMail imports embedded and public HTTP(S) raster images into the draft. Attach files with `attachments: [{filename, content_type, content_base64}]`. For an uploaded image in the HTML, send `inline_images: [{content_id, content_type, content_base64}]` and reference its `inline-<UUID>@openmail` ID with `cid:` in the HTML. The MCP JSON request including base64 is limited to 4 MiB. For larger uploads, the public draft API accepts multipart files up to 25 MiB combined.
+
+Read the saved draft with `get_draft` and its `draft_id`. Review the owning inbox, recipients, text and HTML, thread context, and any attachments before sending. On the user’s instruction, call `send_draft` with the ID and exact `updated_at` from that review. An optional `inbox_id` must match the owner. A successful send removes the draft. Changed versions require another review, and failed or pending attempts retain the draft. Read-only connections can list and read drafts. Creation and sending require write access and the OAuth `send` scope when using OAuth.
+
+## Plugin packages
+
+The Codex/OpenAI, Claude, and Cursor plugins connect to the same hosted MCP server and use the shared `skills/openmail/SKILL.md` instructions. Their draft workflow is `create_draft` → `list_drafts` / `get_draft` → `send_draft` after approval.
+
+Build the OpenAI submission ZIP with `bash scripts/package-openai-plugin.sh`. It includes the updated manifest, shared skill, assets, and OpenAI OAuth configuration. Deploy the draft API and MCP server before publishing updated plugin packages; existing connections may need to refresh their tool list.
+
 ## Env
 
 | Name | Purpose |
