@@ -174,7 +174,7 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
       const draftId = m[1] ? decodeURIComponent(m[1]) : undefined;
       const drafts = state.drafts ??= [];
       if (method === "DELETE" && draftId) {
-        if (me.mcpScopes && !me.mcpScopes.includes("delete_drafts")) return json(403, { error: "insufficient_scope" });
+        if (me.mcpScopes && !me.mcpScopes.includes("send")) return json(403, { error: "insufficient_scope" });
         const draft = drafts.find(row => row.id === draftId);
         if (!draft) return json(404, { error: "not_found", message: "Draft not found" });
         if (!visibleDraft(draft)) return json(403, { error: "forbidden" });

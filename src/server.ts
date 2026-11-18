@@ -349,7 +349,7 @@ function serverInstructions(ctx: SessionContext, allowed: Set<ToolName>): string
   if (allowed.has("delete_draft")) {
     instructions.push("Use delete_draft only when asked to discard a saved draft. Pass its exact updated_at from get_draft; never refresh a stale version and delete automatically. Deletion removes attachments and cannot cancel a pending send.");
   } else if (ctx.authKind === "oauth" && !ctx.readonly && allowed.has("get_draft")) {
-    instructions.push('Draft deletion requires separate permission. If requested, reconnect OpenMail and enable "Delete drafts", then refresh tools. Refreshing an access token does not add this permission.');
+    instructions.push('Draft creation, editing and deletion require send permission. If requested, reconnect OpenMail and enable "Send mail", then refresh tools. Refreshing an access token does not add a missing permission.');
   }
   if (allowed.has("list_inboxes")) {
     instructions.push("Pass inbox_id when the account has more than one inbox (list_inboxes).");

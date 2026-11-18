@@ -39,7 +39,7 @@ Keys and transcripts: over OAuth (Claude, Cursor sign-in) `setup_agent_email` an
 
 `delete_draft` permanently discards an unsent draft and its attachments when the user requests it. Read the draft first and supply `draft_id` and its exact `updated_at`; optional `inbox_id` checks ownership. Deletion never sends mail or cancels a send. A stale version requires reviewing the current draft before another attempt; pending or accepted sends block deletion. Missing drafts return an error, including after a successful prior deletion. Never automatically substitute a newer version or retry deletion.
 
-Writable API-key connections can delete drafts within their inbox or pod scope. OAuth requires the separate `delete_drafts` permission: reconnect and explicitly enable **Delete drafts**, then refresh tools. Existing grants and token refreshes do not gain that permission. Deploy the deletion API and consent UI before this MCP change.
+Writable API-key connections can delete drafts within their inbox or pod scope. OAuth uses the existing `send` scope for creation, editing, sending and deletion. Existing grants with `send` can use these tools; connections without it must reconnect with **Send mail** enabled. Deploy the draft API changes before this MCP change.
 
 Use `create_draft` with the sending `inbox_id`. A connection locked to an inbox supplies its own ID. The owner is fixed when the draft is saved. Recipients, subject and body can be filled in later with `edit_draft` or in the console. For a reply, pass `thread_id` to inherit the subject and send in that thread. For a forward, pass only `source_thread_id` to associate the draft with the original conversation and start a new thread on send.
 
@@ -49,13 +49,13 @@ Use `create_draft` with the sending `inbox_id`. A connection locked to an inbox 
 
 Use `edit_draft` with `draft_id` and the exact `updated_at` from `get_draft`. Only supplied fields change, and editing never sends mail. `to: null` clears the recipient; `cc: []` and `bcc: []` clear copy recipients. Empty strings clear the subject or body. `body_html` replaces the HTML and the API regenerates plain text. Use `body_html: ""` to clear the body, or omit it to preserve the body. Regular attachments remain saved; retain `cid:` references for inline images you want to keep. Uploading attachments remains available through creation or the console. Editing cannot move a draft or change its reply context. If the version is stale, read the draft and reconcile the requested changes before another edit; never automatically overwrite newer edits. Edits are blocked while a send is pending or accepted.
 
-Read the saved draft with `get_draft` and its `draft_id`. Review the owning inbox, recipients, text and HTML, thread context, and any attachments before sending. On the user’s instruction, call `send_draft` with the ID and exact `updated_at` from that review. An optional `inbox_id` must match the owner. A successful send removes the draft. Changed versions require another review, and failed or pending attempts retain the draft. Read-only connections can list and read drafts. Creation, editing and sending require write access and the OAuth `send` scope when using OAuth.
+Read the saved draft with `get_draft` and its `draft_id`. Review the owning inbox, recipients, text and HTML, thread context, and any attachments before sending. On the user’s instruction, call `send_draft` with the ID and exact `updated_at` from that review. An optional `inbox_id` must match the owner. A successful send removes the draft. Changed versions require another review, and failed or pending attempts retain the draft. Read-only connections can list and read drafts. Creation, editing, sending and deletion require write access and the OAuth `send` scope when using OAuth.
 
 ## Plugin packages
 
 The Codex/OpenAI, Claude, and Cursor plugins connect to the same hosted MCP server and use the shared `skills/openmail/SKILL.md` instructions. Their draft workflow is `create_draft` → `list_drafts` / `get_draft` → `edit_draft` as needed → `send_draft` after approval, or `delete_draft` when asked to discard it.
 
-Build the OpenAI submission ZIP with `bash scripts/package-openai-plugin.sh`. It includes the updated manifest, shared skill, assets, and OpenAI OAuth configuration. Deploy the public draft editing and deletion API and the deletion consent UI before deploying this MCP change and publishing updated plugin packages; existing connections may need to refresh their tool list.
+Build the OpenAI submission ZIP with `bash scripts/package-openai-plugin.sh`. It includes the updated manifest, shared skill, assets, and OpenAI OAuth configuration. Deploy the public draft editing and deletion API before deploying this MCP change and publishing updated plugin packages; existing connections may need to refresh their tool list.
 
 ## Env
 

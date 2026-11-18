@@ -251,7 +251,7 @@ describe("tools/list", () => {
   });
 
   it("an OAuth token with every scope matches the account-wide key, minus API-key-only tools", async () => {
-    const client = await connect("/mcp", await oauthToken("read setup send domains delete_drafts"));
+    const client = await connect("/mcp", await oauthToken("read setup send domains"));
     expect(await toolNames(client)).toEqual(without(ALL_TOOLS, ...API_KEY_ONLY));
   });
 });
@@ -969,16 +969,19 @@ describe("draft deletion", () => {
     expect(api.calls("GET", /^\/v1\/drafts\//)).toHaveLength(0);
     expect(api.state.drafts).toEqual([draft]);
   });
-  it("requires explicit OAuth deletion consent, even for old full-access grants", async () => {
+  it.each(["read", "read setup domains", "read delete_drafts"])("blocks deletion without send scope (%s) and allows existing send grants", async (scopes) => {
     const { args } = await savedDraft();
-    const old = await connect("/mcp", await oauthToken("read setup send domains"));
-    expect(await toolNames(old)).not.toContain("delete_draft");
-    expect(old.getInstructions()).toContain('"Delete drafts"');
-    expect((await call(old, "delete_draft", args)).isError).toBe(true);
+    const blocked = await connect("/mcp", await oauthToken(scopes));
+    expect(await toolNames(blocked)).not.toContain("delete_draft");
+    expect(blocked.getInstructions()).toContain('"Send mail"');
+    expect((await call(blocked, "delete_draft", args)).isError).toBe(true);
     expect(api.calls("DELETE", /^\/v1\/drafts\//)).toHaveLength(0);
-    const allowed = await connect("/mcp", await oauthToken("read delete_drafts"));
+    const allowed = await connect("/mcp", await oauthToken("read send"));
     expect(await toolNames(allowed)).toContain("delete_draft");
+    expect(allowed.getInstructions()).not.toContain('reconnect OpenMail and enable "Send mail"');
     expect((await call(allowed, "delete_draft", args)).isError).toBe(false);
+    expect(api.state.drafts).toEqual([]);
+    expect(api.calls("POST", /\/send$/)).toHaveLength(0);
   });
   it("blocks readonly sessions and malformed versions before any API mutation", async () => {
     const { client, args } = await savedDraft();
