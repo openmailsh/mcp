@@ -1,7 +1,7 @@
 {
   "name": "openmail",
   "version": "1.1.0",
-  "description": "Email inbox for AI agents. Read and reply to mail, create and review unsent drafts, send approved drafts or new emails, and manage custom domains.",
+  "description": "Email inbox for AI agents. Read, send and reply to mail, manage drafts and custom domains",
   "author": {
     "name": "OpenMail",
     "email": "support@openmail.to",
