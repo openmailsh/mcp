@@ -22,8 +22,7 @@ export const draftFields = z.object({
   cc: z.array(z.string().email().max(320)).max(100).optional().describe("Visible copy recipients."),
   bcc: z.array(z.string().email().max(320)).max(100).optional().describe("Blind copy recipients."),
   subject: z.string().max(998).optional().describe("Draft subject. Replies inherit their subject from the thread."),
-  body: z.string().max(100000).optional().describe("Plain text or HTML."),
-  body_html: z.string().max(500000).optional().describe("HTML version. OpenMail imports embedded raster images and images at public HTTP(S) URLs into the saved draft."),
+  body_html: z.string().max(500000).optional().describe("HTML message body. This is the only accepted body input; OpenMail generates plain text automatically and imports embedded and public HTTP(S) raster images. Omit for an incomplete draft."),
   attachments: z.array(attachment).optional().describe("Regular files with base64-encoded content. The whole MCP request, including base64, must fit in 4 MiB."),
   inline_images: z.array(inlineImage).optional().describe("Images referenced in the HTML as cid:inline-<UUID>@openmail. Supply the same identifier as content_id."),
 });
@@ -38,14 +37,12 @@ export const editDraftFields = z.object({
   cc: z.array(z.string().email().max(254)).max(100).optional().describe("Replace copy recipients; [] clears them."),
   bcc: z.array(z.string().email().max(254)).max(100).optional().describe("Replace blind-copy recipients; [] clears them."),
   subject: z.string().max(998).optional().describe("Replace the subject; empty string clears it. Reply drafts must retain their original subject."),
-  body: z.string().max(100000).optional().describe("Replacement plain text; empty string clears it. Clears old HTML unless body_html is also supplied. Omit both fields to preserve the body."),
-  body_html: z.string().max(500000).nullable().optional().describe("Replacement HTML, or null for plain text only. Requires body with the replacement plain-text version. Retain cid: references for inline images you want to keep."),
+  body_html: z.string().max(500000).optional().describe("Replacement HTML body. OpenMail generates plain text automatically. Empty string clears the body; omit to preserve it. Retain cid: references for inline images you want to keep."),
 });
 export type EditDraftInput = z.infer<typeof editDraftFields>;
 
 export function editDraftPayload(args: EditDraftInput, inboxId?: string) {
-  if (args.body_html !== undefined && args.body === undefined) throw new Error("body_html requires body with the replacement plain-text version.");
-  if ([args.to, args.cc, args.bcc, args.subject, args.body].every(value => value === undefined)) throw new Error("Supply at least one draft content change.");
+  if ([args.to, args.cc, args.bcc, args.subject, args.body_html].every(value => value === undefined)) throw new Error("Supply at least one draft content change.");
   return {
     updatedAt: args.updated_at,
     ...(inboxId ? { inboxId } : {}),
@@ -53,7 +50,7 @@ export function editDraftPayload(args: EditDraftInput, inboxId?: string) {
     ...(args.cc !== undefined ? { cc: args.cc } : {}),
     ...(args.bcc !== undefined ? { bcc: args.bcc } : {}),
     ...(args.subject !== undefined ? { subject: args.subject } : {}),
-    ...(args.body !== undefined ? { bodyText: args.body, bodyHtml: args.body_html ?? null } : {}),
+    ...(args.body_html !== undefined ? { bodyHtml: args.body_html } : {}),
   };
 }
 
@@ -66,7 +63,6 @@ export function draftPayload(args: DraftInput, inboxId: string): FormData | Reco
     cc: args.cc,
     bcc: args.bcc,
     subject: args.subject,
-    body: args.body,
     bodyHtml: args.body_html,
   };
   if (!args.attachments?.length && !args.inline_images?.length) return fields;

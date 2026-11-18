@@ -200,7 +200,7 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
           id: `draft-${++seq}`, inboxId: b.inboxId, threadId: b.threadId ?? null, sourceThreadId: sourceId ?? null,
           to: b.to ?? null, cc: b.cc ?? [], bcc: b.bcc ?? [], attachments,
           subject: b.threadId ? originalSubject.replace(/^(?:re:\s*)?/i, "Re: ") : b.subject ?? "",
-          bodyText: b.body ?? null, bodyHtml: b.bodyHtml ?? null,
+          bodyText: b.bodyHtml === undefined ? null : String(b.bodyHtml).replace(/<[^>]*>/g, "").trim(), bodyHtml: b.bodyHtml || null,
           createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
         };
         if (!visibleDraft(draft)) return json(403, { error: "forbidden" });
@@ -222,6 +222,10 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
         if (state.draftSendFailure?.body.error === "draft_sending") return json(409, state.draftSendFailure.body);
         for (const field of ["to", "cc", "bcc", "subject", "bodyText", "bodyHtml"] as const) {
           if (input[field] !== undefined) Object.assign(draft, { [field]: input[field] });
+        }
+        if (input.bodyHtml !== undefined) {
+          draft.bodyText = input.bodyHtml?.replace(/<[^>]*>/g, "").trim() ?? "";
+          draft.bodyHtml = input.bodyHtml;
         }
         draft.updatedAt = new Date(Math.max(Date.now(), Date.parse(draft.updatedAt) + 1)).toISOString();
         return json(200, draft);

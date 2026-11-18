@@ -388,6 +388,13 @@ export function createMcpServer(input: {
       if (parsed.success) {
         const reason = setupToolUnavailableReason(ctx, parsed.data.params.name);
         if (reason) return text(reason, true);
+        // Check before SDK validation strips fields absent from the tool schema.
+        if (["create_draft", "edit_draft"].includes(parsed.data.params.name)) {
+          const args = parsed.data.params.arguments;
+          if (args && ["body", "body_text", "bodyText"].some(field => field in args)) {
+            return text("Drafts accept body_html only. OpenMail generates the plain-text fallback automatically.", true);
+          }
+        }
       }
       return handler(request, extra);
     });

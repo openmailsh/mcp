@@ -1024,17 +1024,31 @@ describe("search, forward, and delete", () => {
 
 
 describe("email drafts", () => {
+  it.each(["create_draft", "edit_draft"])("%s exposes HTML only and rejects legacy body fields without an API request", async (tool) => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    const schema = (await client.listTools()).tools.find(item => item.name === tool)!.inputSchema;
+    expect(schema.properties).toHaveProperty("body_html");
+    expect(schema.properties).not.toHaveProperty("body");
+    expect(schema.properties).not.toHaveProperty("body_text");
+    for (const field of ["body", "body_text", "bodyText"]) {
+      const result = await call(client, tool, { draft_id: "d", updated_at: new Date().toISOString(), body_html: "<p>HTML</p>", [field]: "Plain override" });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("body_html only");
+    }
+    expect(api.requests.filter(request => request.path.includes("/drafts"))).toHaveLength(0);
+  });
+
   it.each(["oauth", "inbox key", "URL lock"])("edits saved content with %s without sending or replacing the supplied version", async (auth) => {
     const client = await connect(auth === "URL lock" ? "/mcp/inbox/inbox-a" : "/mcp", auth === "oauth" ? await oauthToken("read send") : auth === "inbox key" ? INBOX_A_KEY : ACCOUNT_KEY);
-    await call(client, "create_draft", { inbox_id: "inbox-a", to: "reader@example.com", subject: "Proposal", body: "Original", body_html: "<p>Original</p>" });
+    await call(client, "create_draft", { inbox_id: "inbox-a", to: "reader@example.com", subject: "Proposal", body_html: "<p>Original</p>" });
     const original = { ...api.state.drafts![0] };
-    const result = await call(client, "edit_draft", { draft_id: original.id, updated_at: original.updatedAt, body: "Revised" });
+    const result = await call(client, "edit_draft", { draft_id: original.id, updated_at: original.updatedAt, body_html: "<p>Revised</p>" });
     expect(result.isError).toBe(false);
     expect(result.text).toContain("No email was sent");
     const patch = api.calls("PATCH", /\/drafts\/[^/]+$/);
     expect(patch).toHaveLength(1);
-    expect(patch[0].body).toEqual({ updatedAt: original.updatedAt, bodyText: "Revised", bodyHtml: null, ...(auth !== "oauth" ? { inboxId: "inbox-a" } : {}) });
-    expect(api.state.drafts![0]).toMatchObject({ subject: original.subject, to: original.to, inboxId: original.inboxId, bodyText: "Revised", bodyHtml: null });
+    expect(patch[0].body).toEqual({ updatedAt: original.updatedAt, bodyHtml: "<p>Revised</p>", ...(auth !== "oauth" ? { inboxId: "inbox-a" } : {}) });
+    expect(api.state.drafts![0]).toMatchObject({ subject: original.subject, to: original.to, inboxId: original.inboxId, bodyText: "Revised", bodyHtml: "<p>Revised</p>" });
     expect(api.state.drafts![0].updatedAt).not.toBe(original.updatedAt);
     expect(result.text).toContain(`updated_at: ${api.state.drafts![0].updatedAt}`);
     const getCount = api.calls("GET", /\/drafts\/[^/]+$/).length;
@@ -1047,20 +1061,20 @@ describe("email drafts", () => {
     expect(api.calls("POST", /\/send$/)).toHaveLength(0);
   });
 
-  it("preserves explicit clears and paired text/HTML edits", async () => {
+  it("preserves explicit clears and submits only HTML", async () => {
     const client = await connect("/mcp", INBOX_A_KEY);
-    await call(client, "create_draft", { to: "reader@example.com", cc: ["copy@example.com"], subject: "Draft", body: "Original" });
+    await call(client, "create_draft", { to: "reader@example.com", cc: ["copy@example.com"], subject: "Draft", body_html: "<p>Original</p>" });
     const draft = api.state.drafts![0];
-    const result = await call(client, "edit_draft", { draft_id: draft.id, updated_at: draft.updatedAt, to: null, cc: [], bcc: [], subject: "", body: "Revised", body_html: "<p>Revised</p>" });
+    const result = await call(client, "edit_draft", { draft_id: draft.id, updated_at: draft.updatedAt, to: null, cc: [], bcc: [], subject: "", body_html: "<p>Revised</p>" });
     expect(result.isError).toBe(false);
     expect(api.state.drafts![0]).toMatchObject({ to: null, cc: [], bcc: [], subject: "", bodyText: "Revised", bodyHtml: "<p>Revised</p>" });
-    await call(client, "edit_draft", { draft_id: draft.id, updated_at: draft.updatedAt, body: "" });
-    expect(api.state.drafts![0]).toMatchObject({ bodyText: "", bodyHtml: null });
+    await call(client, "edit_draft", { draft_id: draft.id, updated_at: draft.updatedAt, body_html: "" });
+    expect(api.state.drafts![0]).toMatchObject({ bodyText: "", bodyHtml: "" });
     expect(api.calls("POST", /\/send$/)).toHaveLength(0);
   });
 
   it.each([
-    {}, { body_html: "<p>Missing plain text</p>" }, { to: "invalid" }, { updated_at: "invalid", subject: "Edit" },
+    {}, { body_html: null }, { to: "invalid" }, { updated_at: "invalid", subject: "Edit" },
   ])("rejects invalid edits before making draft requests: %j", async (fields) => {
     const client = await connect("/mcp", INBOX_A_KEY);
     const result = await call(client, "edit_draft", { draft_id: "d", updated_at: new Date().toISOString(), ...fields });
@@ -1085,18 +1099,18 @@ describe("email drafts", () => {
     const client = await connect("/mcp", await oauthToken("read send"));
     const result = await call(client, "create_draft", {
       inbox_id: "inbox-b", to: "reader@example.com", cc: ["copy@example.com"], bcc: ["private@example.com"],
-      subject: "Review proposal", body: "Plain proposal", body_html: "<p>HTML proposal</p>",
+      subject: "Review proposal", body_html: "<p>HTML proposal</p>",
     });
     expect(result.isError).toBe(false);
     expect(result.text).toContain("No email was sent");
     expect(api.calls("POST", /^\/v1\/drafts$/)[0]?.body).toEqual({
       inboxId: "inbox-b", to: "reader@example.com", cc: ["copy@example.com"], bcc: ["private@example.com"],
-      subject: "Review proposal", body: "Plain proposal", bodyHtml: "<p>HTML proposal</p>",
+      subject: "Review proposal", bodyHtml: "<p>HTML proposal</p>",
     });
     const draft = api.state.drafts![0];
     const read = await call(client, "get_draft", { inbox_id: "inbox-b", draft_id: draft.id });
     expect(read.isError).toBe(false);
-    expect(read.text).toContain("Plain proposal");
+    expect(read.text).toContain("HTML proposal");
     expect(read.text).toContain("<p>HTML proposal</p>");
     expect(read.text).toContain(`updated_at: ${draft.updatedAt}`);
     expect(read.text).toContain("BCC: private@example.com");
@@ -1136,7 +1150,7 @@ describe("email drafts", () => {
 
   it("sends the reviewed saved version once and removes the draft", async () => {
     const client = await connect("/mcp", await oauthToken("read send"));
-    await call(client, "create_draft", { inbox_id: "inbox-a", to: "reader@example.com", subject: "Ready", body: "Approved body" });
+    await call(client, "create_draft", { inbox_id: "inbox-a", to: "reader@example.com", subject: "Ready", body_html: "<p>Approved body</p>" });
     const draft = api.state.drafts![0];
     const args = { inbox_id: "inbox-a", draft_id: draft.id, updated_at: draft.updatedAt };
     const result = await call(client, "send_draft", args);
@@ -1150,7 +1164,7 @@ describe("email drafts", () => {
 
   it("retains a changed draft and requires reviewing its current version", async () => {
     const client = await connect("/mcp", INBOX_A_KEY);
-    await call(client, "create_draft", { to: "reader@example.com", subject: "Ready", body: "Approved body" });
+    await call(client, "create_draft", { to: "reader@example.com", subject: "Ready", body_html: "<p>Approved body</p>" });
     const draft = api.state.drafts![0];
     const result = await call(client, "send_draft", { draft_id: draft.id, updated_at: "2020-01-01T00:00:00.000Z" });
     expect(result.isError).toBe(true);
@@ -1165,7 +1179,7 @@ describe("email drafts", () => {
 
   it("explains failed-send version changes and requires approval before retrying", async () => {
     const client = await connect("/mcp", INBOX_A_KEY);
-    await call(client, "create_draft", { to: "reader@example.com", subject: "Ready", body: "Approved body" });
+    await call(client, "create_draft", { to: "reader@example.com", subject: "Ready", body_html: "<p>Approved body</p>" });
     const draft = { ...api.state.drafts![0] };
     const args = { draft_id: draft.id, updated_at: draft.updatedAt };
     api.state.draftSendFailure = { status: 502, body: { error: "send_failed", message: "Sending failed. Your draft is saved. Refresh and try again." } };
@@ -1192,7 +1206,7 @@ describe("email drafts", () => {
 
   it("tells the agent to wait for a pending send without retrying or bypassing the draft", async () => {
     const client = await connect("/mcp", INBOX_A_KEY);
-    await call(client, "create_draft", { to: "reader@example.com", subject: "Ready", body: "Approved body" });
+    await call(client, "create_draft", { to: "reader@example.com", subject: "Ready", body_html: "<p>Approved body</p>" });
     const draft = { ...api.state.drafts![0] };
     api.state.draftSendFailure = { status: 409, body: { error: "draft_sending", message: "Sending is still being processed. Refresh and try again shortly." } };
 
@@ -1288,7 +1302,7 @@ describe("email drafts", () => {
     expect(api.calls("POST", /^\/v1\/drafts$/)).toHaveLength(0);
     expect(api.calls("GET", /^\/v1\/inboxes/)).toHaveLength(0);
 
-    await call(client, "create_draft", { inbox_id: "inbox-a", subject: "From A", to: "reader@example.com", body: "Review me" });
+    await call(client, "create_draft", { inbox_id: "inbox-a", subject: "From A", to: "reader@example.com", body_html: "<p>Review me</p>" });
     await call(client, "create_draft", { inbox_id: "inbox-b", subject: "From B" });
     const listed = await call(client, "list_drafts");
     expect(listed.text).toContain("From A");
@@ -1354,7 +1368,7 @@ describe("email drafts", () => {
 
   it("enforces URL inbox locks before showing, editing or sending another inbox's draft", async () => {
     const account = await connect("/mcp", ACCOUNT_KEY);
-    await call(account, "create_draft", { inbox_id: "inbox-b", to: "reader@example.com", subject: "Private", body: "Private content" });
+    await call(account, "create_draft", { inbox_id: "inbox-b", to: "reader@example.com", subject: "Private", body_html: "<p>Private content</p>" });
     const draft = api.state.drafts![0];
     const locked = await connect("/mcp/inbox/inbox-a", ACCOUNT_KEY);
     const read = await call(locked, "get_draft", { draft_id: draft.id });
