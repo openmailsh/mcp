@@ -27,6 +27,13 @@ describe("parseSessionFromUrl", () => {
 });
 
 describe("visibleTools", () => {
+  it("requires separate OAuth deletion consent and writable mailbox access", () => {
+    expect(visibleTools(base({ authKind: "oauth", scopes: ["read", "send"] }))).not.toContain("delete_draft");
+    expect(visibleTools(base({ authKind: "oauth", scopes: ["read", "delete_drafts"] }))).toContain("delete_draft");
+    expect(visibleTools(base({ readonly: true }))).not.toContain("delete_draft");
+    expect(visibleTools(base({ toolsets: new Set(["docs"]) }))).not.toContain("delete_draft");
+    expect(visibleTools(base({ apiKeyInboxId: "inbox-1" }))).toContain("delete_draft");
+  });
   it("exposes only docs when unauthenticated", () => {
     expect(
       visibleTools(base({ authKind: "none", token: null })),
@@ -65,6 +72,7 @@ describe("visibleTools", () => {
       "mark_thread_read",
       "send_email",
       "create_draft",
+      "edit_draft",
       "send_draft",
       "reply_to_thread",
       "create_inbox",

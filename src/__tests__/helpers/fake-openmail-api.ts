@@ -173,6 +173,18 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
     if ((m = path.match(/^\/v1\/drafts(?:\/([^/]+))?$/))) {
       const draftId = m[1] ? decodeURIComponent(m[1]) : undefined;
       const drafts = state.drafts ??= [];
+      if (method === "DELETE" && draftId) {
+        if (me.mcpScopes && !me.mcpScopes.includes("delete_drafts")) return json(403, { error: "insufficient_scope" });
+        const draft = drafts.find(row => row.id === draftId);
+        if (!draft) return json(404, { error: "not_found", message: "Draft not found" });
+        if (!visibleDraft(draft)) return json(403, { error: "forbidden" });
+        const input = body as { updatedAt: string; inboxId?: string };
+        if (input.updatedAt !== draft.updatedAt) return json(409, { error: "draft_changed" });
+        if (input.inboxId && input.inboxId !== draft.inboxId) return json(400, { error: "draft_inbox_locked" });
+        if (state.draftSendFailure?.body.error === "draft_sending") return json(409, state.draftSendFailure.body);
+        state.drafts = drafts.filter(row => row.id !== draftId);
+        return json(200, { id: draftId, deleted: true });
+      }
       if (method === "POST" && !draftId) {
         const payload = body instanceof FormData ? {
           ...Object.fromEntries(body),
@@ -200,7 +212,7 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
           id: `draft-${++seq}`, inboxId: b.inboxId, threadId: b.threadId ?? null, sourceThreadId: sourceId ?? null,
           to: b.to ?? null, cc: b.cc ?? [], bcc: b.bcc ?? [], attachments,
           subject: b.threadId ? originalSubject.replace(/^(?:re:\s*)?/i, "Re: ") : b.subject ?? "",
-          bodyText: b.body ?? null, bodyHtml: b.bodyHtml ?? null,
+          bodyText: b.bodyHtml === undefined ? null : String(b.bodyHtml).replace(/<[^>]*>/g, "").trim(), bodyHtml: b.bodyHtml || null,
           createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
         };
         if (!visibleDraft(draft)) return json(403, { error: "forbidden" });
@@ -211,6 +223,24 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
         const draft = drafts.find((row) => row.id === draftId);
         if (draft && !visibleDraft(draft)) return json(403, { error: "forbidden" });
         return draft ? json(200, draft) : json(404, { error: "not_found", message: "Draft not found" });
+      }
+      if (method === "PATCH" && draftId) {
+        const draft = drafts.find(row => row.id === draftId);
+        if (!draft) return json(404, { error: "not_found", message: "Draft not found" });
+        if (!visibleDraft(draft)) return json(403, { error: "forbidden" });
+        const input = body as Partial<Draft>;
+        if (input.updatedAt !== draft.updatedAt) return json(409, { error: "draft_changed", message: "This draft changed. Refresh before continuing." });
+        if (input.inboxId && input.inboxId !== draft.inboxId) return json(400, { error: "draft_inbox_locked" });
+        if (state.draftSendFailure?.body.error === "draft_sending") return json(409, state.draftSendFailure.body);
+        for (const field of ["to", "cc", "bcc", "subject", "bodyText", "bodyHtml"] as const) {
+          if (input[field] !== undefined) Object.assign(draft, { [field]: input[field] });
+        }
+        if (input.bodyHtml !== undefined) {
+          draft.bodyText = input.bodyHtml?.replace(/<[^>]*>/g, "").trim() ?? "";
+          draft.bodyHtml = input.bodyHtml;
+        }
+        draft.updatedAt = new Date(Math.max(Date.now(), Date.parse(draft.updatedAt) + 1)).toISOString();
+        return json(200, draft);
       }
       if (method === "GET") {
         const q = url.searchParams.get("q")?.toLowerCase();
