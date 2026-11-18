@@ -332,15 +332,6 @@ function serverInstructions(ctx: SessionContext, allowed: Set<ToolName>): string
   if (allowed.has("send_email")) {
     instructions.push("Use reply_to_thread for replies and send_email only for new conversations.");
   }
-  if (allowed.has("create_draft")) {
-    instructions.push("Use create_draft to save an unsent email in its sending inbox. Pass thread_id for a reply or source_thread_id alone for a forward. Saving a draft never sends email.");
-  }
-  if (allowed.has("get_draft")) {
-    instructions.push("Use list_drafts and get_draft to find and review saved drafts.");
-  }
-  if (allowed.has("send_draft")) {
-    instructions.push("Use send_draft with the reviewed draft updated_at when the user asks to send it. If a draft changed, show its current recipients and content to the user for approval before retrying.");
-  }
   if (allowed.has("list_inboxes")) {
     instructions.push("Pass inbox_id when the account has more than one inbox (list_inboxes).");
   }

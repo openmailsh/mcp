@@ -12,7 +12,7 @@ OpenMail gives this agent its own inbox. The MCP connector is already signed in;
 
 Run `auth_me` once per conversation. It tells you which organisation you are in and whether you can see one inbox or all of them. If `list_inboxes` is empty, call `setup_agent_email` with `execute: true`; the new address is live immediately.
 
-Several inboxes? Pass `inbox_id` on inbox-specific mail operations and when saving a draft. Use the inbox of the source thread for a reply or forward. `get_draft` only needs `draft_id`. Never guess which one the user means; ask.
+If several inboxes are available, pass `inbox_id` on inbox-specific mail operations. Ask the user if the intended inbox is unclear.
 
 ## Check for new mail
 
