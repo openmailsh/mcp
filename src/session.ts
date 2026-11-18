@@ -27,6 +27,7 @@ export const ALL_TOOLS = [
   "send_email",
   "create_draft",
   "send_draft",
+  "delete_draft",
   "list_drafts",
   "get_draft",
   "reply_to_thread",
@@ -117,6 +118,7 @@ export function visibleTools(ctx: SessionContext): ToolName[] {
     if (!ctx.readonly && hasScope(ctx, "send")) {
       tools.push("send_email", "reply_to_thread", "forward_message", "create_draft", "send_draft");
     }
+    if (!ctx.readonly && hasScope(ctx, "delete_drafts")) tools.push("delete_draft");
     // The API refuses these to OAuth tokens (no consent scope covers them)
     // and to scoped keys, so only list them where they can succeed.
     if (!ctx.readonly && ctx.authKind === "api_key") {

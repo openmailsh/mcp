@@ -277,6 +277,7 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   list_drafts: read("List email drafts"),
   get_draft: read("Read email draft"),
   send_draft: hints("Send saved draft", false, true, true, true),
+  delete_draft: hints("Delete saved draft", false, true, true, false),
   create_draft: hints("Save email draft", false, false, false, true),
   list_unread_threads: read("List unread threads"),
   read_thread: read("Read thread"),
@@ -340,6 +341,11 @@ function serverInstructions(ctx: SessionContext, allowed: Set<ToolName>): string
   }
   if (allowed.has("send_draft")) {
     instructions.push("Use send_draft with the reviewed draft updated_at when the user asks to send it. If a draft changed, show its current recipients and content to the user for approval before retrying.");
+  }
+  if (allowed.has("delete_draft")) {
+    instructions.push("Use delete_draft only when asked to discard a saved draft. Pass its exact updated_at from get_draft; never refresh a stale version and delete automatically. Deletion removes attachments and cannot cancel a pending send.");
+  } else if (ctx.authKind === "oauth" && !ctx.readonly && allowed.has("get_draft")) {
+    instructions.push('Draft deletion requires separate permission. If requested, reconnect OpenMail and enable "Delete drafts", then refresh tools. Refreshing an access token does not add this permission.');
   }
   if (allowed.has("list_inboxes")) {
     instructions.push("Pass inbox_id when the account has more than one inbox (list_inboxes).");
@@ -725,6 +731,41 @@ export function createMcpServer(input: {
       const draft = (await api.get(`/v1/drafts/${encodeURIComponent(String(args.draft_id))}`)) as Draft;
       assertLockedInbox(ctx, draft.inboxId);
       return text(formatDraft(draft));
+    },
+  );
+
+  add(
+    "delete_draft",
+    toolDesc({
+      purpose: "Permanently discard an unsent draft and its attachments without sending email.",
+      notFor: "Deleting sent mail or cancelling a pending or accepted send.",
+      when: "The user asks to delete a saved draft you have identified with get_draft.",
+      triggers: "delete this draft, discard the saved email, remove the draft",
+      returns: "Deleted draft id. A stale version must be reviewed before another deletion; missing drafts return an error.",
+    }),
+    {
+      draft_id: z.string().min(1).describe("Saved draft id to permanently discard."),
+      updated_at: z.string().datetime({ offset: true }).describe("Exact updated_at from get_draft. Never substitute a newer version automatically."),
+      inbox_id: z.string().min(1).optional().describe("Optional ownership check; must match the saved inbox."),
+    },
+    async (args) => {
+      if (!api) return signIn();
+      const requestedInbox = args.inbox_id as string | undefined;
+      if (requestedInbox) assertLockedInbox(ctx, requestedInbox);
+      const inboxId = requestedInbox ?? lockedInboxId(ctx) ?? undefined;
+      const path = `/v1/drafts/${encodeURIComponent(String(args.draft_id))}`;
+      if (ctx.inboxId) {
+        const draft = await api.get(path) as Draft;
+        assertLockedInbox(ctx, draft.inboxId);
+      }
+      try {
+        const result = await api.delete(path, { updatedAt: args.updated_at, ...(inboxId ? { inboxId } : {}) }) as { id: string; deleted: boolean };
+        return text(`Draft deleted. No email was sent.\ndraft: ${result.id}`);
+      } catch (err) {
+        if (err instanceof ApiError && err.code === "draft_changed") return text("draft_changed: The draft changed. Use get_draft and verify that the current draft is still the one to discard. Do not automatically substitute a newer updated_at or retry deletion. Nothing was deleted by this request.", true);
+        if (err instanceof ApiError && err.code === "draft_sending") return text("draft_sending: This draft has a pending or accepted send and cannot be deleted. Check the draft and sent mail; do not retry deletion automatically. Deleting a draft does not cancel a send.", true);
+        throw err;
+      }
     },
   );
 

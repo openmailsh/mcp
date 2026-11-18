@@ -23,8 +23,9 @@ import {
 const MCP_SECRET = "test-mcp-secret-at-least-32-chars-long!!";
 const MCP_RESOURCE = "https://mcp.openmail.sh";
 
-const ACCOUNT_KEY = "om_account_key";
-const INBOX_A_KEY = "om_inbox_a_key";
+let ACCOUNT_KEY = "om_account_key";
+let INBOX_A_KEY = "om_inbox_a_key";
+let testSequence = 0;
 
 let api: FakeOpenMailApi;
 let mcpServer: http.Server;
@@ -115,6 +116,9 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
+  // Each test is a separate account session, including its rate-limit budget.
+  ACCOUNT_KEY = `om_account_key_${++testSequence}`;
+  INBOX_A_KEY = `om_inbox_a_key_${testSequence}`;
   api.reset(seed());
 });
 
@@ -172,7 +176,7 @@ async function oauthToken(scope: string) {
 const sorted = (names: readonly string[]) => [...names].sort();
 const without = (names: readonly string[], ...drop: string[]) => sorted(names.filter((n) => !drop.includes(n)));
 
-const WRITE_TOOLS = ["setup_agent_email", "create_draft", "send_draft", "send_email", "reply_to_thread", "forward_message", "mark_thread_read", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain", "update_inbox", "delete_thread", "delete_message"];
+const WRITE_TOOLS = ["delete_draft", "setup_agent_email", "create_draft", "send_draft", "send_email", "reply_to_thread", "forward_message", "mark_thread_read", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain", "update_inbox", "delete_thread", "delete_message"];
 /** The API refuses these to every OAuth token, so OAuth sessions never list them. */
 const API_KEY_ONLY = ["update_inbox", "delete_thread", "delete_message"];
 
@@ -233,7 +237,7 @@ describe("tools/list", () => {
       sorted([
         "search_docs", "get_docs", "auth_me", "send_mcp_feedback",
         "get_inbox", "list_unread_threads", "read_thread", "get_attachment", "get_attachment_text", "search_mail",
-        "list_drafts", "get_draft", "create_draft", "send_draft",
+        "list_drafts", "get_draft", "create_draft", "send_draft", "delete_draft",
         "mark_thread_read", "send_email", "reply_to_thread", "forward_message",
       ]),
     );
@@ -242,12 +246,12 @@ describe("tools/list", () => {
   it("a read-only OAuth token keeps mark_thread_read but loses send, setup, and domain writes", async () => {
     const client = await connect("/mcp", await oauthToken("read"));
     expect(await toolNames(client)).toEqual(
-      without(ALL_TOOLS, "setup_agent_email", "create_draft", "send_draft", "send_email", "reply_to_thread", "forward_message", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain", ...API_KEY_ONLY),
+      without(ALL_TOOLS, "delete_draft", "setup_agent_email", "create_draft", "send_draft", "send_email", "reply_to_thread", "forward_message", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain", ...API_KEY_ONLY),
     );
   });
 
   it("an OAuth token with every scope matches the account-wide key, minus API-key-only tools", async () => {
-    const client = await connect("/mcp", await oauthToken("read setup send domains"));
+    const client = await connect("/mcp", await oauthToken("read setup send domains delete_drafts"));
     expect(await toolNames(client)).toEqual(without(ALL_TOOLS, ...API_KEY_ONLY));
   });
 });
@@ -293,11 +297,11 @@ describe("setup permission guidance", () => {
   });
 
   it.each([
-    { label: "read-only endpoint", path: "/mcp/readonly", token: ACCOUNT_KEY, reason: /read.only/i, hidden: setupCalls },
-    { label: "inbox API key", path: "/mcp", token: INBOX_A_KEY, reason: /inbox/i, hidden: setupCalls },
-    { label: "inbox endpoint", path: "/mcp/inbox/inbox-a", token: ACCOUNT_KEY, reason: /inbox/i, hidden: setupCalls.slice(0, 2) },
+    { label: "read-only endpoint", path: "/mcp/readonly", token: () => ACCOUNT_KEY, reason: /read.only/i, hidden: setupCalls },
+    { label: "inbox API key", path: "/mcp", token: () => INBOX_A_KEY, reason: /inbox/i, hidden: setupCalls },
+    { label: "inbox endpoint", path: "/mcp/inbox/inbox-a", token: () => ACCOUNT_KEY, reason: /inbox/i, hidden: setupCalls.slice(0, 2) },
   ])("explains the $label restriction without suggesting broader OAuth consent", async ({ path, token, reason, hidden }) => {
-    const client = await connect(path, token);
+    const client = await connect(path, token());
     const names = await toolNames(client);
     expect(client.getInstructions()).not.toContain("No inbox yet: setup_agent_email");
     expect(client.getInstructions()).not.toContain("Set up inboxes");
@@ -931,6 +935,79 @@ describe("mailbox tools", () => {
 // ---------------------------------------------------------------------------
 // Tools requested in enterprise feedback: search, forward, auto-forward, delete
 // ---------------------------------------------------------------------------
+
+describe("draft deletion", () => {
+  async function savedDraft() {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    await call(client, "create_draft", { inbox_id: "inbox-a", body_html: "<p>Discard</p>" });
+    const draft = api.state.drafts![0];
+    draft.id = "draft/encoded";
+    return { client, draft, args: { draft_id: draft.id, updated_at: draft.updatedAt } };
+  }
+  it("deletes a versioned draft once with an inbox key, without sending or fetching", async () => {
+    const { draft, args } = await savedDraft();
+    const client = await connect("/mcp", INBOX_A_KEY);
+    const result = await call(client, "delete_draft", args);
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("Draft deleted");
+    expect(api.calls("DELETE", /^\/v1\/drafts\//)).toMatchObject([{ path: "/v1/drafts/draft%2Fencoded", body: { updatedAt: draft.updatedAt, inboxId: "inbox-a" } }]);
+    expect(api.calls("GET", /^\/v1\/drafts\//)).toHaveLength(0);
+    expect(api.calls("POST", /\/send$/)).toHaveLength(0);
+    expect(api.state.drafts).toEqual([]);
+    expect((await call(client, "delete_draft", args)).isError).toBe(true);
+  });
+  it.each(["draft_changed", "draft_sending"])("returns %s with deletion guidance and no automatic retry", async error => {
+    const { client, draft, args } = await savedDraft();
+    if (error === "draft_changed") args.updated_at = "2020-01-01T00:00:00.000Z";
+    else api.state.draftSendFailure = { status: 409, body: { error, message: "Sending" } };
+    const result = await call(client, "delete_draft", args);
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain(error);
+    expect(result.text).toMatch(/not.*(automatically|retry)/i);
+    expect(result.text).not.toContain("approval before sending");
+    expect(api.calls("DELETE", /^\/v1\/drafts\//)).toHaveLength(1);
+    expect(api.calls("GET", /^\/v1\/drafts\//)).toHaveLength(0);
+    expect(api.state.drafts).toEqual([draft]);
+  });
+  it("requires explicit OAuth deletion consent, even for old full-access grants", async () => {
+    const { args } = await savedDraft();
+    const old = await connect("/mcp", await oauthToken("read setup send domains"));
+    expect(await toolNames(old)).not.toContain("delete_draft");
+    expect(old.getInstructions()).toContain('"Delete drafts"');
+    expect((await call(old, "delete_draft", args)).isError).toBe(true);
+    expect(api.calls("DELETE", /^\/v1\/drafts\//)).toHaveLength(0);
+    const allowed = await connect("/mcp", await oauthToken("read delete_drafts"));
+    expect(await toolNames(allowed)).toContain("delete_draft");
+    expect((await call(allowed, "delete_draft", args)).isError).toBe(false);
+  });
+  it("blocks readonly sessions and malformed versions before any API mutation", async () => {
+    const { client, args } = await savedDraft();
+    const readonly = await connect("/mcp/readonly", ACCOUNT_KEY);
+    expect((await call(readonly, "delete_draft", args)).isError).toBe(true);
+    for (const invalid of [{ draft_id: args.draft_id }, { ...args, updated_at: "invalid" }]) {
+      expect((await call(client, "delete_draft", invalid)).isError).toBe(true);
+    }
+    expect(api.calls("DELETE", /^\/v1\/drafts\//)).toHaveLength(0);
+  });
+  it("enforces URL and credential inbox locks and retains foreign drafts", async () => {
+    const { client, draft, args } = await savedDraft();
+    const locked = await connect("/mcp/inbox/inbox-b", ACCOUNT_KEY);
+    expect((await call(locked, "delete_draft", args)).isError).toBe(true);
+    expect(api.calls("DELETE", /^\/v1\/drafts\//)).toHaveLength(0);
+    const scoped = await connect("/mcp", INBOX_A_KEY);
+    expect((await call(scoped, "delete_draft", { ...args, inbox_id: "inbox-b" })).isError).toBe(true);
+    expect(api.calls("DELETE", /^\/v1\/drafts\//)).toHaveLength(0);
+    draft.inboxId = "inbox-b";
+    expect((await call(scoped, "delete_draft", args)).isError).toBe(true);
+    expect(api.state.drafts).toEqual([draft]);
+    expect((await call(client, "delete_draft", { ...args, inbox_id: "inbox-a" })).isError).toBe(true);
+  });
+  it("marks deletion as destructive and never implies sending", async () => {
+    const { client } = await savedDraft();
+    const { tools } = await client.listTools();
+    expect(tools.find(tool => tool.name === "delete_draft")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false });
+  });
+});
 
 describe("search, forward, and delete", () => {
   it("search_mail matches every word across subject, sender, and body, and says how far it looked", async () => {

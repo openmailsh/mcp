@@ -36,7 +36,7 @@ export type OpenMailApi = {
   getBinary: (path: string, maxBytes: number) => Promise<BinaryResponse>;
   post: (path: string, body?: unknown) => Promise<unknown>;
   patch: (path: string, body?: unknown) => Promise<unknown>;
-  delete: (path: string) => Promise<unknown>;
+  delete: (path: string, body?: unknown) => Promise<unknown>;
 };
 
 export function createOpenMailApi(
@@ -131,7 +131,7 @@ export function createOpenMailApi(
     getBinary,
     post: (path, body) => request("POST", path, body ?? {}),
     patch: (path, body) => request("PATCH", path, body ?? {}),
-    delete: (path) => request("DELETE", path),
+    delete: (path, body) => request("DELETE", path, body),
   };
 }
 

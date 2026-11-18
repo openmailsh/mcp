@@ -173,6 +173,18 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
     if ((m = path.match(/^\/v1\/drafts(?:\/([^/]+))?$/))) {
       const draftId = m[1] ? decodeURIComponent(m[1]) : undefined;
       const drafts = state.drafts ??= [];
+      if (method === "DELETE" && draftId) {
+        if (me.mcpScopes && !me.mcpScopes.includes("delete_drafts")) return json(403, { error: "insufficient_scope" });
+        const draft = drafts.find(row => row.id === draftId);
+        if (!draft) return json(404, { error: "not_found", message: "Draft not found" });
+        if (!visibleDraft(draft)) return json(403, { error: "forbidden" });
+        const input = body as { updatedAt: string; inboxId?: string };
+        if (input.updatedAt !== draft.updatedAt) return json(409, { error: "draft_changed" });
+        if (input.inboxId && input.inboxId !== draft.inboxId) return json(400, { error: "draft_inbox_locked" });
+        if (state.draftSendFailure?.body.error === "draft_sending") return json(409, state.draftSendFailure.body);
+        state.drafts = drafts.filter(row => row.id !== draftId);
+        return json(200, { id: draftId, deleted: true });
+      }
       if (method === "POST" && !draftId) {
         const payload = body instanceof FormData ? {
           ...Object.fromEntries(body),

@@ -37,6 +37,10 @@ Keys and transcripts: over OAuth (Claude, Cursor sign-in) `setup_agent_email` an
 
 ## Drafts
 
+`delete_draft` permanently discards an unsent draft and its attachments when the user requests it. Read the draft first and supply `draft_id` and its exact `updated_at`; optional `inbox_id` checks ownership. Deletion never sends mail or cancels a send. A stale version requires reviewing the current draft before another attempt; pending or accepted sends block deletion. Missing drafts return an error, including after a successful prior deletion. Never automatically substitute a newer version or retry deletion.
+
+Writable API-key connections can delete drafts within their inbox or pod scope. OAuth requires the separate `delete_drafts` permission: reconnect and explicitly enable **Delete drafts**, then refresh tools. Existing grants and token refreshes do not gain that permission. Deploy the deletion API and consent UI before this MCP change.
+
 Use `create_draft` with the sending `inbox_id`. A connection locked to an inbox supplies its own ID. The owner is fixed when the draft is saved. Recipients, subject and body can be filled in later in the console. For a reply, pass `thread_id` to inherit the subject and send in that thread. For a forward, pass only `source_thread_id` to associate the draft with the original conversation and start a new thread on send.
 
 `list_drafts` lists all drafts visible to the connection. Combine `inbox_id`, `pod_id`, `source_thread_id` and `query` to narrow the results. Use `limit` and `offset` to page through matches. The console also shows drafts in each inbox, in the main Drafts view, and on their source threads.
