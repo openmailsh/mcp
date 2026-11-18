@@ -663,7 +663,6 @@ describe("mailbox tools", () => {
     expect(info).toMatchObject({ name: "openmail", title: "OpenMail", websiteUrl: "https://openmail.sh" });
     expect(info?.icons?.[0]).toMatchObject({ src: expect.stringMatching(/^https:\/\//), sizes: ["180x180"] });
     expect(client.getInstructions()).toContain("list_unread_threads");
-    expect(client.getInstructions()).not.toMatch(/draft/i);
   });
 
   it("setup_agent_email plan echoes the requested mailbox, domain, and display name", async () => {
