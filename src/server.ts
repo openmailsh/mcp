@@ -3,6 +3,7 @@ import { CallToolRequestSchema, type CallToolResult, type ToolAnnotations } from
 import { z } from "zod";
 import type { SessionContext, ToolName } from "./session.js";
 import { assertLockedInbox, lockedInboxId, setupToolUnavailableReason, visibleTools } from "./session.js";
+import { draftFields, draftPayload, type DraftInput } from "./draft.js";
 import { getDocs, searchDocs } from "./docs.js";
 import {
   ATTACHMENT_INLINE_LIMIT,
@@ -276,7 +277,7 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   list_drafts: read("List email drafts"),
   get_draft: read("Read email draft"),
   send_draft: hints("Send saved draft", false, true, true, true),
-  create_draft: hints("Save email draft", false, false, false, false),
+  create_draft: hints("Save email draft", false, false, false, true),
   list_unread_threads: read("List unread threads"),
   read_thread: read("Read thread"),
   get_attachment: read("Get attachment"),
@@ -332,7 +333,7 @@ function serverInstructions(ctx: SessionContext, allowed: Set<ToolName>): string
     instructions.push("Use reply_to_thread for replies and send_email only for new conversations.");
   }
   if (allowed.has("create_draft")) {
-    instructions.push("Use create_draft to save an unsent email for review. Saving a draft never sends email.");
+    instructions.push("Use create_draft to save an unsent email in its sending inbox. Pass thread_id for a reply or source_thread_id alone for a forward. Saving a draft never sends email.");
   }
   if (allowed.has("get_draft")) {
     instructions.push("Use list_drafts and get_draft to find and review saved drafts.");
@@ -649,37 +650,27 @@ export function createMcpServer(input: {
     },
   );
 
+  const lockedDraftInbox = lockedInboxId(ctx);
   add(
     "create_draft",
     toolDesc({
-      purpose: "Save an organisation email draft for review; the sending inbox can be chosen later. Never sends email.",
-      notFor: "Sending email, changing an existing draft, or saving attachments or reply-thread context. Use the console to save drafts with attachments or replies.",
+      purpose: "Save an unsent email in its sending inbox, optionally with attachments and thread context.",
+      notFor: "Sending email or editing a saved draft. Use the console for edits.",
       when: "The user wants to save a draft or prepare mail for review in the console.",
       triggers: "save an email draft, draft an email, prepare mail for review",
       returns: "Saved draft id, inbox, recipients, subject and body. Incomplete drafts are allowed.",
     }),
     {
-      inbox_id: z.string().min(1).optional().describe("Optional sending inbox. Omit to choose it later; inbox-locked sessions use their locked inbox."),
-      to: z.string().email().optional().describe("Recipient, if known. Omit for an incomplete draft."),
-      subject: z.string().max(998).optional().describe("Draft subject. May be empty or omitted."),
-      body: z.string().max(100000).optional().describe("Draft body, plain text or HTML. May be empty or omitted."),
-      body_html: z.string().max(500000).optional().describe("Optional HTML version when it differs from body."),
-      cc: CC_SCHEMA,
-      bcc: BCC_SCHEMA,
+      ...draftFields.shape,
+      inbox_id: lockedDraftInbox ? draftFields.shape.inbox_id.optional() : draftFields.shape.inbox_id,
     },
     async (args) => {
       if (!api) return signIn();
-      const requestedInbox = args.inbox_id as string | undefined;
-      if (requestedInbox) assertLockedInbox(ctx, requestedInbox);
-      const inboxId = requestedInbox ?? lockedInboxId(ctx) ?? undefined;
-      const draft = (await api.post("/v1/drafts", {
-        ...(inboxId ? { inboxId } : {}),
-        ...(args.to !== undefined ? { to: args.to } : {}),
-        ...(args.subject !== undefined ? { subject: args.subject } : {}),
-        ...(args.body !== undefined ? { body: args.body } : {}),
-        ...(args.body_html !== undefined ? { bodyHtml: args.body_html } : {}),
-        ...copies(args),
-      })) as Draft;
+      const input = args as DraftInput;
+      const inboxId = input.inbox_id ?? lockedDraftInbox;
+      if (!inboxId) throw new Error("Select the sending inbox before creating a draft.");
+      assertLockedInbox(ctx, inboxId);
+      const draft = await api.post("/v1/drafts", draftPayload(input, inboxId)) as Draft;
       return text(`Saved draft. No email was sent.\n\n${formatDraft(draft)}`);
     },
   );
@@ -687,14 +678,16 @@ export function createMcpServer(input: {
   add(
     "list_drafts",
     toolDesc({
-      purpose: "List saved, unsent email drafts across the organisation, with optional inbox filtering.",
+      purpose: "List saved, unsent email drafts across accessible inboxes. Combine inbox, pod, source thread and text filters.",
       notFor: "Received or sent messages, or editing drafts.",
       when: "The user wants to review draft emails or find a draft id.",
       triggers: "show my drafts, list draft emails, find a draft",
       returns: "Draft ids, recipients and subjects, total count and pagination offset.",
     }),
     {
-      inbox_id: z.string().min(1).optional().describe("Optional filter by selected sending inbox. Omit to list all accessible drafts; inbox locks still apply."),
+      inbox_id: z.string().min(1).optional().describe("Filter by the owning inbox. Inbox locks always apply."),
+      pod_id: z.string().min(1).optional().describe("Filter by the pod containing the owning inbox."),
+      source_thread_id: z.string().min(1).optional().describe("Filter by the conversation that a reply or forward was composed from."),
       limit: z.number().int().min(1).max(100).optional().describe("Page size, defaults to 50."),
       offset: z.number().int().min(0).optional().describe("Number of drafts to skip, defaults to 0."),
       query: z.string().max(1000).optional().describe("Search draft recipient, subject or plain-text body."),
@@ -708,6 +701,8 @@ export function createMcpServer(input: {
       const query = new URLSearchParams({ limit: String(args.limit ?? 50), offset: String(offset) });
       if (args.query) query.set("q", String(args.query));
       if (inboxId) query.set("inboxId", inboxId);
+      if (args.pod_id) query.set("podId", String(args.pod_id));
+      if (args.source_thread_id) query.set("sourceThreadId", String(args.source_thread_id));
       const drafts = (await api.get(`/v1/drafts?${query}`)) as { data: Draft[]; total: number };
       return text(formatDrafts(drafts.data, drafts.total, inboxId, offset));
     },
@@ -720,7 +715,7 @@ export function createMcpServer(input: {
       notFor: "Reading a sent message or sending the draft.",
       when: "The user wants the contents of a saved draft.",
       triggers: "read this draft, open draft, review the draft",
-      returns: "Draft id, inbox, To/CC/BCC recipients, subject, body, saved reply thread and attachment metadata/download URLs. Review all saved content before sending. Nothing is sent.",
+      returns: "Draft id, inbox, To/CC/BCC recipients, subject, body, reply and source thread ids, HTML, attachment metadata, inline content ids and download URLs. Review all saved content before sending. Nothing is sent.",
     }),
     {
       draft_id: z.string().min(1).describe("Draft id returned by create_draft or list_drafts."),
@@ -743,7 +738,7 @@ export function createMcpServer(input: {
       returns: "Sent message and thread ids. Failed sends retain the draft. A changed draft must be reviewed again.",
     }),
     {
-      inbox_id: z.string().min(1).optional().describe("Sending inbox. Omit to use the draft's saved sender; required when no sender has been selected. Reply drafts must keep their original inbox."),
+      inbox_id: z.string().min(1).optional().describe("Optional check that the saved draft belongs to this inbox. A draft always sends from its owning inbox."),
       draft_id: z.string().min(1).describe("Saved draft id from get_draft."),
       updated_at: z.string().datetime({ offset: true }).describe("Exact updated_at from get_draft. Read and review the draft before sending; do not substitute a newly fetched version without review."),
     },

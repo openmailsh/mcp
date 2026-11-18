@@ -410,9 +410,10 @@ Hosted HTTP is the product. Bridge with:
 
 export type Draft = {
   id: string;
-  inboxId: string | null;
+  inboxId: string;
+  sourceThreadId?: string | null;
   threadId?: string | null;
-  attachments?: Array<{ filename: string; contentType: string; sizeBytes: number; url?: string }>;
+  attachments?: Array<{ filename: string; contentType: string; sizeBytes: number; contentId?: string; url?: string }>;
   to: string | null;
   cc: string[];
   bcc: string[];
@@ -427,8 +428,9 @@ export function formatDraft(draft: Draft): string {
   return [
     `# Draft: ${draft.subject || "(no subject)"}`,
     `draft: ${draft.id}`,
-    `sending inbox: ${draft.inboxId || "(not selected)"}`,
+    `sending inbox: ${draft.inboxId}`,
     ...(draft.threadId ? [`reply thread: ${draft.threadId}`] : []),
+    ...(draft.sourceThreadId ? [`source thread: ${draft.sourceThreadId}`] : []),
     `To: ${draft.to || "(no recipient)"}`,
     ...(draft.cc.length ? [`CC: ${draft.cc.join(", ")}`] : []),
     ...(draft.bcc.length ? [`BCC: ${draft.bcc.join(", ")}`] : []),
@@ -437,11 +439,13 @@ export function formatDraft(draft: Draft): string {
     "Status: unsent draft",
     "",
     draft.bodyText || draft.bodyHtml || "(empty body)",
+    ...(draft.bodyText && draft.bodyHtml ? ["", "HTML:", draft.bodyHtml] : []),
     ...(draft.attachments?.length ? [
       "",
       `Attachments (${draft.attachments.length}):`,
       ...draft.attachments.map((attachment, index) =>
         `${index + 1}. ${attachment.filename} (${attachment.contentType}, ${attachment.sizeBytes} bytes)` +
+        (attachment.contentId ? `\n   content id: ${attachment.contentId}` : "") +
         (attachment.url ? `\n   download: ${attachment.url}` : "")),
     ] : []),
   ].join("\n");
@@ -453,7 +457,7 @@ export function formatDrafts(rows: Draft[], total: number, inboxId: string | und
   const nextOffset = offset + rows.length;
   return [
     `Drafts${scope}: ${offset + 1}–${nextOffset} of ${total}`,
-    ...rows.map((draft) => `- ${draft.subject || "(no subject)"} → ${draft.to || "(no recipient)"}\n  draft: ${draft.id}`),
+    ...rows.map((draft) => `- ${draft.subject || "(no subject)"} → ${draft.to || "(no recipient)"}\n  draft: ${draft.id} · inbox: ${draft.inboxId}`),
     ...(nextOffset < total ? [`More drafts: call list_drafts with offset ${nextOffset}.`] : []),
   ].join("\n");
 }

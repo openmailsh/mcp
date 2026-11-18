@@ -12,7 +12,7 @@ OpenMail gives this agent its own inbox. The MCP connector is already signed in;
 
 Run `auth_me` once per conversation. It tells you which organisation you are in and whether you can see one inbox or all of them. If `list_inboxes` is empty, call `setup_agent_email` with `execute: true`; the new address is live immediately.
 
-Several inboxes? Pass `inbox_id` on inbox-specific mail operations and when choosing a draft sender. Draft listing and retrieval are organisation-level; `get_draft` only needs `draft_id`. Never guess which one the user means; ask.
+Several inboxes? Pass `inbox_id` on inbox-specific mail operations and when saving a draft. Use the inbox of the source thread for a reply or forward. `get_draft` only needs `draft_id`. Never guess which one the user means; ask.
 
 ## Check for new mail
 
@@ -24,11 +24,13 @@ Attachments show a `message:` id under the filename in `read_thread`. Pass that 
 
 ## Drafts
 
-When asked to save or prepare an unsent email, use `create_draft`. The sending inbox, recipient, subject and body may be omitted for incomplete drafts. Account-wide connections can create drafts before any inbox exists; scoped keys need an inbox within their scope. `list_drafts` is paginated across all accessible drafts, with an optional inbox filter. `list_drafts` finds saved drafts and `get_draft` reads their content. Saving a draft never sends email. Return the saved draft ID and content so the user can review it. The console can choose the sending inbox, edit recipients and subject, and send drafts; the body remains read-only. Sending is a separate action and needs the user’s instruction.
+When asked to prepare an unsent email, use `create_draft` with the sending `inbox_id`. A connection locked to an inbox supplies that ID automatically. If the intended inbox is unclear, look it up with `list_inboxes` or ask the user. Each draft keeps its original sending inbox. Recipients, subject and body are optional at creation. Return the saved draft ID and content for review. The console allows editing saved drafts.
 
-The MCP `create_draft` tool saves content only; use the console to save attachments or a reply tied to an existing thread. `get_draft` shows the saved reply thread and each attachment with its filename, type, size and download URL. Include them in the review. Reply drafts keep their original sending inbox and thread. All saved draft bodies remain read-only.
+For replies, pass `thread_id` so the draft inherits the subject and stays in the thread when sent. For a forward or new message composed from a conversation, pass `source_thread_id` alone. Both appear on the source thread in the console. Pass `body_html` for rich text. OpenMail imports embedded and public HTTP(S) raster images. Attach files with `attachments` (`filename`, `content_type`, `content_base64`). Upload inline images with `inline_images` (`content_id`, `content_type`, `content_base64`), referencing each `inline-<UUID>@openmail` ID with `cid:` in the HTML. Keep the entire MCP request under 4 MiB.
 
-To send a saved draft, read it with `get_draft`, then call `send_draft` with its `draft_id` and exact `updated_at`. Set `inbox_id` to choose the sending inbox, or omit it to use the saved selection. If no sender is selected, ask which inbox to use before sending. Creation and sending require OAuth `send` scope (or an API key); read-only connections can list and read drafts. Use `send_draft` for saved drafts so delivery uses their stored recipients, content, attachments and reply thread and removes them only on success. Do not copy the draft into `send_email`. If the version is stale, show the changed recipients or content for review before retrying; failed sends retain the draft.
+Use `list_drafts` across all accessible inboxes or combine `inbox_id`, `pod_id`, `source_thread_id`, text `query`, `limit` and `offset`. Use `get_draft` to review the sending inbox, recipients, subject, text and HTML, reply/source thread and attachments, including inline content IDs and download URLs when available.
+
+To send an approved draft, use `send_draft` with its `draft_id` and exact reviewed `updated_at`. Omit `inbox_id` or pass the owning inbox as a check. Creation and sending require a writable connection and OAuth `send` scope when using OAuth. Read-only connections can list and read. A successful send preserves attachments and reply threading and removes the draft. If the version is stale, review the current content with the user before retrying. A failed or pending send retains the draft. Never bypass the saved version by copying it into `send_email`.
 
 ## Sending
 

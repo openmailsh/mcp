@@ -1040,6 +1040,7 @@ describe("email drafts", () => {
     const read = await call(client, "get_draft", { inbox_id: "inbox-b", draft_id: draft.id });
     expect(read.isError).toBe(false);
     expect(read.text).toContain("Plain proposal");
+    expect(read.text).toContain("<p>HTML proposal</p>");
     expect(read.text).toContain(`updated_at: ${draft.updatedAt}`);
     expect(read.text).toContain("BCC: private@example.com");
     expect(api.calls("POST", /\/send$/)).toHaveLength(0);
@@ -1171,7 +1172,8 @@ describe("email drafts", () => {
     expect(page.text).not.toContain("Other");
     expect(api.calls("GET", /drafts\?limit=1&offset=0&q=A\+%26\+B&inboxId=inbox-a$/)).toHaveLength(1);
     const next = await call(client, "list_drafts", { inbox_id: "inbox-a", query: "A & B", limit: 1, offset: 1 });
-    expect(next.text).toContain("A & B second");
+    expect(page.text).toContain("A & B second");
+    expect(next.text).toContain("A & B first");
   });
 
   it.each(["/mcp/readonly", "/mcp?readonly=true"])("%s can read drafts but cannot create or send them", async (path) => {
@@ -1207,7 +1209,7 @@ describe("email drafts", () => {
 
   it("rejects invalid recipients and pagination without making draft requests", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
-    expect((await call(client, "create_draft", { to: "not-an-email" })).isError).toBe(true);
+    expect((await call(client, "create_draft", { inbox_id: "inbox-a", to: "not-an-email" })).isError).toBe(true);
     expect((await call(client, "list_drafts", { offset: -1 })).isError).toBe(true);
     expect((await call(client, "send_draft", { draft_id: "draft-1" })).isError).toBe(true);
     expect((await call(client, "send_draft", { draft_id: "draft-1", updated_at: "invalid" })).isError).toBe(true);
@@ -1215,21 +1217,76 @@ describe("email drafts", () => {
     expect(api.requests.filter((request) => request.path.includes("/drafts"))).toHaveLength(0);
   });
 
-  it("creates drafts without an inbox and lists them across the organisation", async () => {
+  it("requires an owning inbox on create and never changes it when sending", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
-    await call(client, "create_draft", { to: "reader@example.com", subject: "Unassigned", body: "Review me" });
-    await call(client, "create_draft", { inbox_id: "inbox-b", subject: "Assigned" });
-    const draft = api.state.drafts![0];
-    expect(draft.inboxId).toBeNull();
+    const required = (await client.listTools()).tools.find(tool => tool.name === "create_draft")?.inputSchema.required;
+    expect(required).toContain("inbox_id");
+    expect((await call(client, "create_draft", { subject: "Missing sender" })).isError).toBe(true);
+    expect(api.calls("POST", /^\/v1\/drafts$/)).toHaveLength(0);
     expect(api.calls("GET", /^\/v1\/inboxes/)).toHaveLength(0);
+
+    await call(client, "create_draft", { inbox_id: "inbox-a", subject: "From A", to: "reader@example.com", body: "Review me" });
+    await call(client, "create_draft", { inbox_id: "inbox-b", subject: "From B" });
     const listed = await call(client, "list_drafts");
-    expect(listed.text).toContain("Unassigned");
-    expect(listed.text).toContain("Assigned");
-    const read = await call(client, "get_draft", { draft_id: draft.id });
-    expect(read.text).toContain("(not selected)");
+    expect(listed.text).toContain("From A");
+    expect(listed.text).toContain("inbox: inbox-a");
+    expect(listed.text).toContain("From B");
+    expect(listed.text).toContain("inbox: inbox-b");
+    const draft = api.state.drafts!.find(row => row.inboxId === "inbox-a")!;
     const sent = await call(client, "send_draft", { draft_id: draft.id, updated_at: draft.updatedAt, inbox_id: "inbox-b" });
-    expect(sent.isError).toBe(false);
-    expect(api.calls("POST", /\/drafts\/[^/]+\/send$/)[0]?.body).toEqual({ updatedAt: draft.updatedAt, inboxId: "inbox-b" });
+    expect(sent.isError).toBe(true);
+    expect(sent.text).toContain("draft_inbox_locked");
+    expect(api.state.drafts!.find(row => row.id === draft.id)?.inboxId).toBe("inbox-a");
+  });
+
+  it("distinguishes replies from forwards and combines inbox, pod, source and text filters", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const reply = await call(client, "create_draft", { inbox_id: "inbox-a", thread_id: "thread-a1" });
+    expect(reply.text).toContain("reply thread: thread-a1");
+    expect(reply.text).toContain("source thread: thread-a1");
+    expect(reply.text).toContain("Re: " + api.state.threads["thread-a1"].subject);
+    const forward = await call(client, "create_draft", { inbox_id: "inbox-a", source_thread_id: "thread-a1", subject: "Forward this" });
+    expect(forward.text).toContain("source thread: thread-a1");
+    expect(forward.text).not.toContain("reply thread:");
+    await call(client, "create_draft", { inbox_id: "inbox-a", subject: "Forward unrelated" });
+    const filters = { inbox_id: "inbox-a", pod_id: "pod-1", source_thread_id: "thread-a1", query: "Forward" };
+    const page = await call(client, "list_drafts", filters);
+    expect(page.text).toContain("1–1 of 1");
+    expect(page.text).toContain("Forward this");
+    expect((await call(client, "list_drafts", { ...filters, pod_id: "pod-2" })).text).toContain("Total: 0");
+    const invalid = await call(client, "create_draft", { inbox_id: "inbox-a", source_thread_id: "thread-a1", thread_id: "thread-a2" });
+    expect(invalid.isError).toBe(true);
+    expect((await call(client, "create_draft", { inbox_id: "inbox-b", source_thread_id: "thread-a1" })).isError).toBe(true);
+  });
+
+  it("uploads regular files and referenced inline images as multipart with repeated recipients", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    const cid = "inline-01234567-89ab-cdef-0123-456789abcdef@openmail";
+    const html = `<p>See report</p><img src="cid:${cid}">`;
+    const bytes = Buffer.from([0, 128, 255]);
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRXsAAAAASUVORK5CYII=";
+    const cc = ["one@example.com", "two@example.com"];
+    const saved = await call(client, "create_draft", {
+      thread_id: "thread-a1", body_html: html, cc, bcc: ["private@example.com"],
+      attachments: [{ filename: "report.bin", content_type: "application/octet-stream", content_base64: bytes.toString("base64") }],
+      inline_images: [{ content_id: cid, content_type: "image/png", content_base64: png }],
+    });
+    expect(saved.isError).toBe(false);
+    expect(saved.text).toContain("report.bin (application/octet-stream, 3 bytes)");
+    expect(saved.text).toContain("content id: " + cid);
+    const req = api.calls("POST", /^\/v1\/drafts$/)[0];
+    expect(req.headers["content-type"]).toMatch(/^multipart\/form-data; boundary=/);
+    const form = req.body as FormData;
+    expect(form.get("inboxId")).toBe("inbox-a");
+    expect(form.get("bodyHtml")).toBe(html);
+    expect(form.get("threadId")).toBe("thread-a1");
+    expect(form.getAll("cc")).toEqual(cc);
+    expect(form.getAll("bcc")).toEqual(["private@example.com"]);
+    const file = form.get("attachments") as File;
+    expect(Buffer.from(await file.arrayBuffer())).toEqual(bytes);
+    const image = form.get("inlineImages") as File;
+    expect(image.name).toBe(cid);
+    expect(Buffer.from(await image.arrayBuffer()).toString("base64")).toBe(png);
   });
 
   it("enforces URL inbox locks before showing or sending another inbox's draft", async () => {
@@ -1245,11 +1302,11 @@ describe("email drafts", () => {
     expect(api.calls("POST", /\/drafts\/[^/]+\/send$/)).toHaveLength(0);
   });
 
-  it("marks saving drafts as a non-destructive write without external delivery", async () => {
+  it("marks draft creation as a non-destructive write that may import external images", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     const { tools } = await client.listTools();
     expect(tools.find((tool) => tool.name === "create_draft")?.annotations).toMatchObject({
-      readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false,
+      readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true,
     });
     expect(tools.find((tool) => tool.name === "send_draft")?.annotations).toMatchObject({
       readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true,

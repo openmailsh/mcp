@@ -42,6 +42,8 @@ const CONTENT_ARGS: ReadonlySet<string> = new Set([
   "body",
   "body_html",
   "bodyHtml",
+  "attachments",
+  "inline_images",
   "message",
   "mailboxName",
   "displayName",

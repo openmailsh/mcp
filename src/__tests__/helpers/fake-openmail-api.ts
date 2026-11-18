@@ -33,6 +33,7 @@ export type FakeThread = {
 
 export type FakeInbox = {
   id: string;
+  podId?: string | null;
   address: string;
   displayName?: string | null;
   forwardTo?: string | null;
@@ -88,20 +89,21 @@ export type FakeOpenMailApi = {
   close(): Promise<void>;
 };
 
-function readBody(req: http.IncomingMessage): Promise<unknown> {
-  return new Promise((resolve) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (c: Buffer) => chunks.push(c));
-    req.on("end", () => {
-      const raw = Buffer.concat(chunks).toString("utf8");
-      if (!raw) return resolve(undefined);
-      try {
-        resolve(JSON.parse(raw));
-      } catch {
-        resolve(raw);
-      }
-    });
-  });
+async function readBody(req: http.IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(chunk);
+  const data = Buffer.concat(chunks);
+  if (!data.length) return undefined;
+  const contentType = req.headers["content-type"] ?? "";
+  if (contentType.startsWith("multipart/form-data")) {
+    return new Response(data, { headers: { "Content-Type": contentType } }).formData();
+  }
+  const raw = data.toString("utf8");
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
 }
 
 export function emptyState(): FakeState {
@@ -159,29 +161,50 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
       if (!visibleDraft(draft)) return json(403, { error: "forbidden" });
       const input = body as { updatedAt?: string; inboxId?: string };
       if (input.updatedAt !== draft.updatedAt) return json(409, { error: "draft_changed", message: "This draft changed. Refresh before continuing." });
-      const inboxId = input.inboxId ?? draft.inboxId;
-      if (!inboxId) return json(400, { error: "inbox_required", message: "Select a sending inbox." });
-      if (!visibleDraft({ ...draft, inboxId })) return json(403, { error: "forbidden" });
+      if (input.inboxId && input.inboxId !== draft.inboxId) return json(400, { error: "draft_inbox_locked", message: "A draft must use its original sending inbox." });
       if (!draft.to || !draft.subject || (!draft.bodyText && !draft.bodyHtml)) return json(400, { error: "incomplete_draft", message: "Complete the draft before sending." });
       if (state.draftSendFailure) {
         if (state.draftSendFailure.body.error === "send_failed") draft.updatedAt = new Date(Math.max(Date.now(), Date.parse(draft.updatedAt) + 1)).toISOString();
         return json(state.draftSendFailure.status, state.draftSendFailure.body);
       }
       state.drafts = state.drafts!.filter((row) => row.id !== draftId);
-      return json(200, { messageId: `msg-${++seq}`, threadId: `thread-${seq}`, status: "sent" });
+      return json(200, { messageId: `msg-${++seq}`, threadId: draft.threadId ?? `thread-${seq}`, status: "sent" });
     }
     if ((m = path.match(/^\/v1\/drafts(?:\/([^/]+))?$/))) {
       const draftId = m[1] ? decodeURIComponent(m[1]) : undefined;
       const drafts = state.drafts ??= [];
       if (method === "POST" && !draftId) {
-        const b = (body ?? {}) as { inboxId?: string; to?: string; cc?: string[]; bcc?: string[]; subject?: string; body?: string; bodyHtml?: string };
+        const payload = body instanceof FormData ? {
+          ...Object.fromEntries(body),
+          cc: body.getAll("cc"), bcc: body.getAll("bcc"),
+        } : body;
+        const b = payload as { inboxId?: string; threadId?: string; sourceThreadId?: string; to?: string; cc?: string[]; bcc?: string[]; subject?: string; body?: string; bodyHtml?: string };
+        if (!b.inboxId) return json(400, { error: "inbox_required" });
+        if (!state.inboxes.some(i => i.id === b.inboxId)) return json(404, { error: "not_found" });
+        const sourceId = b.sourceThreadId ?? b.threadId;
+        if (b.threadId && b.threadId !== sourceId) return json(400, { error: "invalid_draft" });
+        const source = sourceId ? state.threads[sourceId] : undefined;
+        if (sourceId && source?.inboxId !== b.inboxId) return json(404, { error: "not_found" });
+        const attachments: NonNullable<Draft["attachments"]> = [];
+        if (body instanceof FormData) {
+          for (const key of ["attachments", "inlineImages"]) {
+            for (const file of body.getAll(key)) {
+              if (typeof file === "string") return json(400, { error: "invalid_draft" });
+              attachments.push({ filename: file.name, contentType: file.type, sizeBytes: file.size,
+                ...(key === "inlineImages" ? { contentId: file.name } : {}) });
+            }
+          }
+        }
+        const originalSubject = source?.subject || "(no subject)";
         const draft: Draft = {
-          id: `draft-${++seq}`, inboxId: b.inboxId ?? null, to: b.to ?? null, cc: b.cc ?? [], bcc: b.bcc ?? [],
-          subject: b.subject ?? "", bodyText: b.body ?? null, bodyHtml: b.bodyHtml ?? null,
+          id: `draft-${++seq}`, inboxId: b.inboxId, threadId: b.threadId ?? null, sourceThreadId: sourceId ?? null,
+          to: b.to ?? null, cc: b.cc ?? [], bcc: b.bcc ?? [], attachments,
+          subject: b.threadId ? originalSubject.replace(/^(?:re:\s*)?/i, "Re: ") : b.subject ?? "",
+          bodyText: b.body ?? null, bodyHtml: b.bodyHtml ?? null,
           createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
         };
         if (!visibleDraft(draft)) return json(403, { error: "forbidden" });
-        drafts.push(draft);
+        drafts.unshift(draft);
         return json(201, draft);
       }
       if (method === "GET" && draftId) {
@@ -192,7 +215,13 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
       if (method === "GET") {
         const q = url.searchParams.get("q")?.toLowerCase();
         const inboxId = url.searchParams.get("inboxId");
-        const matches = drafts.filter((row) => visibleDraft(row) && (!inboxId || row.inboxId === inboxId) && (!q || [row.to, row.subject, row.bodyText, row.bodyHtml].some((field) => field?.toLowerCase().includes(q))));
+        const podId = url.searchParams.get("podId");
+        const source = url.searchParams.get("sourceThreadId");
+        const matches = drafts.filter(row => visibleDraft(row) &&
+          (!inboxId || row.inboxId === inboxId) &&
+          (!podId || state.inboxes.find(i => i.id === row.inboxId)?.podId === podId) &&
+          (!source || row.sourceThreadId === source) &&
+          (!q || [row.to, row.subject, row.bodyText].some(field => field?.toLowerCase().includes(q))));
         const offset = Number(url.searchParams.get("offset") ?? 0);
         const limit = Number(url.searchParams.get("limit") ?? 50);
         return json(200, { data: matches.slice(offset, offset + limit), total: matches.length });

@@ -57,21 +57,21 @@
             },
             {
               "description": "Save an unsent draft",
-              "prompt": "Save a draft to support@openmail.to with subject Review test and body Please review this proposal. Do not send it.",
+              "prompt": "From the connected inbox, save a draft to support@openmail.to with subject Review test and body Please review this proposal. Do not send it.",
               "tools_triggered": "create_draft",
-              "expected_behavior": "Saves an organisation draft without requiring a sending inbox, returns its ID and content, and confirms that no email was sent. Does not call send_email or send_draft."
+              "expected_behavior": "Saves a draft in the selected inbox, returns its ID and content, and confirms that no email was sent. Does not call send_email or send_draft."
             },
             {
               "description": "Review saved drafts",
               "prompt": "Show my saved OpenMail drafts and open the one with subject Review test.",
               "tools_triggered": "list_drafts, get_draft",
-              "expected_behavior": "Lists saved drafts, then shows the selected draft recipients, subject, body and updated_at. Does not send or change the draft."
+              "expected_behavior": "Lists drafts across accessible inboxes, then shows the owning inbox, recipients, subject, text and HTML, thread context, attachments and updated_at. Does not send or change the draft."
             },
             {
               "description": "Send a reviewed draft",
               "prompt": "Send the Review test draft I just reviewed and approved.",
               "tools_triggered": "get_draft, send_draft",
-              "expected_behavior": "Checks the saved recipients and content still match the approved version, then sends using draft_id, its exact updated_at, and the selected sending inbox. If no sender is selected, asks which inbox to use. If the draft changed, shows the changes and obtains approval before sending. Reports the message and thread IDs on success."
+              "expected_behavior": "Checks the saved recipients and content still match the approved version, then sends from the owning inbox using draft_id and its exact reviewed updated_at. If the draft changed, shows the changes and obtains approval before sending. Reports the message and thread IDs on success."
             },
             {
               "description": "Search past mail",
@@ -109,7 +109,7 @@
         "commerce": false
       },
       "publication": {
-        "release_notes": "Adds create_draft, list_drafts, get_draft and send_draft. Save organisation drafts before choosing a sender, list with pagination, review recipients and content, then send the reviewed version with send permission. Read-only connections can view drafts; stale versions require another review and failed sends retain the draft."
+        "release_notes": "Adds create_draft, list_drafts, get_draft and send_draft. Save drafts in their sending inbox with replies, forwards, rich text and attachments. Filter by inbox, pod or source thread and send the reviewed version from its owning inbox with send permission. Read-only connections can view drafts; stale versions require another review and failed sends retain the draft."
       }
     }
   }

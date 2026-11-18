@@ -37,11 +37,13 @@ Keys and transcripts: over OAuth (Claude, Cursor sign-in) `setup_agent_email` an
 
 ## Drafts
 
-Use `create_draft` to save an unsent email, then `list_drafts` and `get_draft` to review it. Drafts belong to the organisation. Sending inbox, recipient, subject and body are optional; account-wide connections can save drafts before an inbox exists. `list_drafts` lists all accessible drafts and accepts an optional inbox filter; `get_draft` needs only `draft_id`. Draft creation requires OAuth `send` scope (or an API key) and is unavailable on read-only connections. Reading drafts is available on read-only connections. Inbox locks apply to every draft tool. Saving a draft never sends it; the console can select a sending inbox, edit recipients and subject, and send drafts.
+Use `create_draft` with the sending `inbox_id`. A connection locked to an inbox supplies its own ID. The owner is fixed when the draft is saved. Recipients, subject and body can be filled in later in the console. For a reply, pass `thread_id` to inherit the subject and send in that thread. For a forward, pass only `source_thread_id` to associate the draft with the original conversation and start a new thread on send.
 
-`create_draft` saves content through the public API; attachment uploads and saving replies are available in the console. `get_draft` includes any saved reply thread and every attachment’s filename, type, size and download URL. Saved reply drafts retain their original inbox. All saved draft bodies stay read-only.
+`list_drafts` lists all drafts visible to the connection. Combine `inbox_id`, `pod_id`, `source_thread_id` and `query` to narrow the results. Use `limit` and `offset` to page through matches. The console also shows drafts in each inbox, in the main Drafts view, and on their source threads.
 
-To send a saved draft, read it with `get_draft`, then call `send_draft` with its `draft_id`, exact `updated_at`, and `inbox_id` to select a sender (or omit the inbox to use the saved selection). Sending requires the user’s instruction and OAuth `send` scope (or an API key). Read-only connections cannot send. Sending preserves the stored attachments and reply threading. Stale versions must be reviewed again; failed sends retain the draft.
+`create_draft` accepts `body` and `body_html`. OpenMail imports embedded and public HTTP(S) raster images into the draft. Attach files with `attachments: [{filename, content_type, content_base64}]`. For an uploaded image in the HTML, send `inline_images: [{content_id, content_type, content_base64}]` and reference its `inline-<UUID>@openmail` ID with `cid:` in the HTML. The MCP JSON request including base64 is limited to 4 MiB. For larger uploads, the public draft API accepts multipart files up to 25 MiB combined.
+
+Read the saved draft with `get_draft` and its `draft_id`. Review the owning inbox, recipients, text and HTML, thread context, and any attachments before sending. On the user’s instruction, call `send_draft` with the ID and exact `updated_at` from that review. An optional `inbox_id` must match the owner. A successful send removes the draft. Changed versions require another review, and failed or pending attempts retain the draft. Read-only connections can list and read drafts. Creation and sending require write access and the OAuth `send` scope when using OAuth.
 
 ## Plugin packages
 
