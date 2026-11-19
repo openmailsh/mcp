@@ -691,6 +691,27 @@ describe("mailbox tools", () => {
     expect(result.text).toContain("Invoice #42 total 100 EUR");
   });
 
+  it("lists IDs and uses them to read same-named attachments with distinct resource URIs", async () => {
+    const files = ["first", "second"].map(id => ({ id, filename: "sąskaita.txt" }));
+    api.state.threads["thread-a1"].messages[0].attachments = files;
+    for (const file of files) {
+      api.state.attachments[`msg-a1/${file.id}`] = { ...file, inboxId: "inbox-a", contentType: "text/plain", text: `${file.id} file` };
+    }
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const thread = await call(client, "read_thread", { thread_id: "thread-a1" });
+    for (const file of files) {
+      expect(thread.text).toContain(`${file.filename} (attachment_id: ${file.id})`);
+      const args = { message_id: "msg-a1", attachment_id: file.id };
+      const extracted = await call(client, "get_attachment_text", args);
+      expect(extracted.text).toContain(`# ${file.filename}\n\n${file.id} file`);
+      const downloaded = await client.callTool({ name: "get_attachment", arguments: args });
+      expect(downloaded.content).toMatchObject([
+        { text: expect.stringContaining(file.filename) },
+        { resource: { uri: `openmail://attachment/msg-a1/${file.id}`, text: `${file.id} file` } },
+      ]);
+    }
+  });
+
   it("get_attachment returns an image block for a png the API labeled octet-stream", async () => {
     const png = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",

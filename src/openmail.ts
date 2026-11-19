@@ -19,6 +19,7 @@ export class PayloadTooLargeError extends Error {
     public readonly limit: number,
     public readonly size: number | null,
     public readonly contentType: string | null,
+    public readonly filename?: string,
   ) {
     super(size == null ? `Response exceeds ${limit} bytes` : `Response is ${size} bytes`);
     this.name = "PayloadTooLargeError";
@@ -28,7 +29,19 @@ export class PayloadTooLargeError extends Error {
 export type BinaryResponse = {
   bytes: Buffer;
   contentType: string | null;
+  filename?: string;
 };
+
+/** The OpenMail download response includes the original UTF-8 filename. */
+function attachmentFilename(disposition: string | null): string | undefined {
+  const encoded = disposition?.match(/;\s*filename\*=UTF-8''([^;]+)$/i)?.[1];
+  if (!encoded) return undefined;
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return undefined;
+  }
+}
 
 export type OpenMailApi = {
   get: (path: string) => Promise<unknown>;
@@ -94,19 +107,20 @@ export function createOpenMailApi(
     const res = await send("GET", path);
     const contentType = res.headers.get("content-type");
     if (!res.ok) throw await readError(res);
+    const filename = attachmentFilename(res.headers.get("content-disposition"));
 
     // Stop before buffering a 25 MB mail attachment into the tool result.
     const declared = res.headers.get("content-length");
     const declaredSize = declared == null ? NaN : Number(declared);
     if (Number.isFinite(declaredSize) && declaredSize > maxBytes) {
       await res.body?.cancel().catch(() => undefined);
-      throw new PayloadTooLargeError(maxBytes, declaredSize, contentType);
+      throw new PayloadTooLargeError(maxBytes, declaredSize, contentType, filename);
     }
 
     if (!res.body) {
       const bytes = Buffer.from(await res.arrayBuffer());
-      if (bytes.length > maxBytes) throw new PayloadTooLargeError(maxBytes, bytes.length, contentType);
-      return { bytes, contentType };
+      if (bytes.length > maxBytes) throw new PayloadTooLargeError(maxBytes, bytes.length, contentType, filename);
+      return { bytes, contentType, filename };
     }
 
     const reader = res.body.getReader();
@@ -117,13 +131,13 @@ export function createOpenMailApi(
         const { done, value } = await reader.read();
         if (done) break;
         total += value.byteLength;
-        if (total > maxBytes) throw new PayloadTooLargeError(maxBytes, null, contentType);
+        if (total > maxBytes) throw new PayloadTooLargeError(maxBytes, null, contentType, filename);
         chunks.push(value);
       }
     } finally {
       await reader.cancel().catch(() => undefined);
     }
-    return { bytes: Buffer.concat(chunks), contentType };
+    return { bytes: Buffer.concat(chunks), contentType, filename };
   }
 
   return {
