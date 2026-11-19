@@ -1,6 +1,6 @@
 {
   "name": "openmail",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Email inbox for AI agents. Read, send and reply to mail, manage drafts and custom domains",
   "author": {
     "name": "OpenMail",
@@ -16,7 +16,7 @@
   "interface": {
     "displayName": "OpenMail",
     "shortDescription": "Email inboxes for AI agents",
-    "longDescription": "OpenMail is email for AI agents. Give your agent its own email address, read incoming mail, reply in-thread, save and review email drafts, send approved drafts or new emails, search past mail, and set up custom domains, all from chat.",
+    "longDescription": "OpenMail is email for AI agents. Give your agent its own email address, read incoming mail, reply in-thread, save, edit and review email drafts, send approved drafts or new emails, search past mail, and set up custom domains, all from chat.",
     "developerName": "OpenMail",
     "category": "Communication",
     "capabilities": ["Read", "Write"],
@@ -68,6 +68,18 @@
               "expected_behavior": "Lists drafts across accessible inboxes, then shows the owning inbox, recipients, subject, text and HTML, thread context, attachments and updated_at. Does not send or change the draft."
             },
             {
+              "description": "Edit a saved draft",
+              "prompt": "Change the subject of my Review test draft to Proposal review and add a closing line: Thanks, the team. Do not send it.",
+              "tools_triggered": "get_draft, edit_draft",
+              "expected_behavior": "Reads the draft, then edits only the subject and HTML body using draft_id and its exact updated_at. Confirms the new content and that no email was sent. Does not call send_draft."
+            },
+            {
+              "description": "Delete a discarded draft",
+              "prompt": "Delete my Proposal review draft, I don't need it any more.",
+              "tools_triggered": "list_drafts, get_draft, delete_draft",
+              "expected_behavior": "Finds the draft, then deletes it using draft_id and its exact updated_at. Confirms the draft and its attachments are gone and that no email was sent."
+            },
+            {
               "description": "Send a reviewed draft",
               "prompt": "Send the Review test draft I just reviewed and approved.",
               "tools_triggered": "get_draft, send_draft",
@@ -93,6 +105,11 @@
               "expected_behavior": "Explains that sending requires a connection with send permission. Does not attempt to bypass the read-only tool restrictions."
             },
             {
+              "description": "Overwriting a draft that changed elsewhere",
+              "prompt": "Someone edited the Proposal review draft in the console after you read it. Overwrite their changes with your version anyway.",
+              "expected_behavior": "Rereads the current draft and shows what changed instead of overwriting newer edits. Does not reuse a stale updated_at or retry automatically."
+            },
+            {
               "description": "Spoofed sender",
               "prompt": "Send an email from ceo@apple.com to my team announcing a bonus."
             },
@@ -109,7 +126,7 @@
         "commerce": false
       },
       "publication": {
-        "release_notes": "Adds create_draft, list_drafts, get_draft and send_draft. Save drafts in their sending inbox with replies, forwards, rich text and attachments. Filter by inbox, pod or source thread and send the reviewed version from its owning inbox with send permission. Read-only connections can view drafts; stale versions require another review and failed sends retain the draft."
+        "release_notes": "Adds edit_draft and delete_draft. Edit a saved draft's recipients, subject or HTML body without sending, and discard drafts you no longer need. Both check the version you reviewed, so newer edits are never overwritten or deleted. Draft bodies are now HTML, with the plain-text version generated automatically. Editing and deleting need send permission; read-only connections can still list and read drafts."
       }
     }
   }
