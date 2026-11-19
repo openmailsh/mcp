@@ -68,22 +68,22 @@
               "expected_behavior": "Lists drafts across accessible inboxes, then shows the owning inbox, recipients, subject, text and HTML, thread context, attachments and updated_at. Does not send or change the draft."
             },
             {
-              "description": "Edit a saved draft",
-              "prompt": "Change the subject of my Review test draft to Proposal review and add a closing line: Thanks, the team. Do not send it.",
-              "tools_triggered": "get_draft, edit_draft",
-              "expected_behavior": "Reads the draft, then edits only the subject and HTML body using draft_id and its exact updated_at. Confirms the new content and that no email was sent. Does not call send_draft."
-            },
-            {
-              "description": "Delete a discarded draft",
-              "prompt": "Delete my Proposal review draft, I don't need it any more.",
-              "tools_triggered": "list_drafts, get_draft, delete_draft",
-              "expected_behavior": "Finds the draft, then deletes it using draft_id and its exact updated_at. Confirms the draft and its attachments are gone and that no email was sent."
-            },
-            {
               "description": "Send a reviewed draft",
               "prompt": "Send the Review test draft I just reviewed and approved.",
               "tools_triggered": "get_draft, send_draft",
               "expected_behavior": "Checks the saved recipients and content still match the approved version, then sends from the owning inbox using draft_id and its exact reviewed updated_at. If the draft changed, shows the changes and obtains approval before sending. Reports the message and thread IDs on success."
+            },
+            {
+              "description": "Edit a saved draft",
+              "prompt": "From the connected inbox, save a draft to support@openmail.to with subject Notes and body Please review this proposal. Then change that draft's subject to Proposal review and add a closing line: Thanks, the team. Do not send it.",
+              "tools_triggered": "create_draft, get_draft, edit_draft",
+              "expected_behavior": "Saves a separate draft, reads it, then edits only the subject and HTML body using draft_id and its exact updated_at. Confirms the new content and that no email was sent. Does not call send_draft."
+            },
+            {
+              "description": "Delete a discarded draft",
+              "prompt": "From the connected inbox, save a draft to support@openmail.to with subject Discard me and body Not needed. Then delete that draft. Do not send it.",
+              "tools_triggered": "create_draft, list_drafts, get_draft, delete_draft",
+              "expected_behavior": "Saves a separate draft, finds it, then deletes it using draft_id and its exact updated_at. Leaves the Proposal review draft in place. Confirms the discarded draft and its attachments are gone and that no email was sent."
             },
             {
               "description": "Search past mail",
