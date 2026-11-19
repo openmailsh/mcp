@@ -32,9 +32,15 @@ function text(markdown: string, isError = false): CallToolResult {
   return { content: [{ type: "text", text: markdown }], isError };
 }
 
-/** Same path get_attachment_text already uses, without the `/text` suffix. */
-function attachmentApiPath(messageId: string, filename: string): string {
-  return `/v1/attachments/${messageId}/${encodeURIComponent(filename)}`;
+function attachmentReference(args: Record<string, unknown>) {
+  const messageId = String(args.message_id);
+  const filename = typeof args.filename === "string" ? args.filename : undefined;
+  const selector = typeof args.attachment_id === "string" ? args.attachment_id : filename;
+  if (!selector) throw new Error("Pass attachment_id or filename from read_thread.");
+  return {
+    messageId, selector, filename,
+    path: `/v1/attachments/${encodeURIComponent(messageId)}/${encodeURIComponent(selector)}`,
+  };
 }
 
 const CC_SCHEMA = z.array(z.string().email()).optional().describe("People to copy on the email. Every recipient sees who was copied.");
@@ -206,7 +212,7 @@ type ThreadMessages = {
     bodyHtml?: string | null;
     autoReplyable?: boolean | null;
     category?: string | null;
-    attachments?: Array<{ filename: string }>;
+    attachments?: Array<{ id?: string; filename: string }>;
   }>;
 };
 
@@ -1237,7 +1243,8 @@ export function createMcpServer(input: {
 
   const attachmentArgs = {
     message_id: z.string().describe("The `message:` id shown under the attachment in read_thread"),
-    filename: z.string().describe("Attachment filename exactly as listed after `attachments:` in read_thread."),
+    attachment_id: z.string().min(1).optional().describe("The attachment_id printed beside this file in read_thread. Identifies the file even when names repeat."),
+    filename: z.string().min(1).optional().describe("Legacy filename from read_thread. Selects the first exact match when attachment_id is omitted."),
   };
   const inlineLimit = formatByteSize(ATTACHMENT_INLINE_LIMIT);
 
@@ -1253,30 +1260,31 @@ export function createMcpServer(input: {
     attachmentArgs,
     async (args) => {
       if (!api) return signIn();
-      const messageId = String(args.message_id);
-      const filename = String(args.filename);
-      const path = attachmentApiPath(messageId, filename);
+      const { messageId, selector, filename, path } = attachmentReference(args);
       // The download is raw bytes, so it cannot carry inboxId. The text
       // endpoint does, and a URL-locked session still holds an account-wide
       // key — without this check it could read another inbox's file.
       let hintedType: string | undefined;
+      let displayName = filename ?? selector;
       if (lockedInboxId(ctx)) {
-        const meta = (await api.get(`${path}/text`)) as { inboxId?: string; contentType?: string };
+        const meta = (await api.get(`${path}/text`)) as { inboxId?: string; contentType?: string; filename?: string };
         assertLockedInbox(ctx, meta.inboxId);
         hintedType = meta.contentType;
+        displayName = meta.filename ?? displayName;
       }
       let file;
       try {
         file = await api.getBinary(path, ATTACHMENT_INLINE_LIMIT);
       } catch (err) {
         if (err instanceof PayloadTooLargeError) {
-          const mime = resolveMime(specificMime(err.contentType) ? err.contentType : hintedType, filename);
-          return text(tooLargeMessage(filename, mime, err.size), true);
+          const name = err.filename ?? displayName;
+          const mime = resolveMime(specificMime(err.contentType) ? err.contentType : hintedType, name);
+          return text(tooLargeMessage(name, mime, err.size), true);
         }
         throw err;
       }
       const contentType = specificMime(file.contentType) ? file.contentType : (hintedType ?? file.contentType);
-      return buildAttachmentContent({ messageId, filename, bytes: file.bytes, contentType });
+      return buildAttachmentContent({ messageId, selector, filename: file.filename ?? displayName, bytes: file.bytes, contentType });
     },
   );
 
@@ -1292,11 +1300,10 @@ export function createMcpServer(input: {
     attachmentArgs,
     async (args) => {
       if (!api) return signIn();
-      const extracted = (await api.get(
-        `${attachmentApiPath(String(args.message_id), String(args.filename))}/text`,
-      )) as { text?: string; filename?: string; inboxId?: string };
+      const { path, selector } = attachmentReference(args);
+      const extracted = (await api.get(`${path}/text`)) as { text?: string; filename?: string; inboxId?: string };
       assertLockedInbox(ctx, extracted.inboxId);
-      return text(`# ${extracted.filename || args.filename}\n\n${extracted.text || ""}`);
+      return text(`# ${extracted.filename || selector}\n\n${extracted.text || ""}`);
     },
   );
 

@@ -110,8 +110,8 @@ export function tooLargeMessage(filename: string, mime: string, size: number | n
   ].join(" ");
 }
 
-function attachmentUri(messageId: string, filename: string): string {
-  return `openmail://attachment/${encodeURIComponent(messageId)}/${encodeURIComponent(filename)}`;
+function attachmentUri(messageId: string, selector: string): string {
+  return `openmail://attachment/${encodeURIComponent(messageId)}/${encodeURIComponent(selector)}`;
 }
 
 /**
@@ -121,6 +121,7 @@ function attachmentUri(messageId: string, filename: string): string {
  */
 export function buildAttachmentContent(input: {
   messageId: string;
+  selector?: string;
   filename: string;
   bytes: Buffer;
   contentType: string | null;
@@ -143,7 +144,7 @@ export function buildAttachmentContent(input: {
       ],
     };
   }
-  const uri = attachmentUri(input.messageId, input.filename);
+  const uri = attachmentUri(input.messageId, input.selector ?? input.filename);
   const decoded = isTextual(mime) ? decodeUtf8(input.bytes) : null;
   if (decoded != null) {
     return {

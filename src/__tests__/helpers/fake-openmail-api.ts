@@ -18,7 +18,7 @@ export type FakeMessage = {
   createdAt?: string;
   bodyText?: string | null;
   autoReplyable?: boolean | null;
-  attachments?: Array<{ filename: string }>;
+  attachments?: Array<{ id?: string; filename: string }>;
 };
 
 export type FakeThread = {
@@ -42,6 +42,7 @@ export type FakeInbox = {
 };
 
 export type FakeAttachment = {
+  filename?: string;
   inboxId: string;
   text: string;
   /** Raw file. Omitted → the extracted text, as UTF-8. */
@@ -365,7 +366,7 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
       const filename = decodeURIComponent(m[2]);
       const att = state.attachments[`${m[1]}/${filename}`];
       if (!att) return json(404, { error: "not_found", message: "Attachment not found" });
-      return json(200, { filename, inboxId: att.inboxId, text: att.text, contentType: att.contentType });
+      return json(200, { filename: att.filename ?? filename, inboxId: att.inboxId, text: att.text, contentType: att.contentType });
     }
 
     if ((m = path.match(/^\/v1\/attachments\/([^/]+)\/([^/]+)$/)) && method === "GET") {
@@ -374,6 +375,7 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
       if (!att) return json(404, { error: "not_found", message: "Attachment not found" });
       const body = att.bytes ?? Buffer.from(att.text, "utf8");
       const type = att.contentType ?? "application/octet-stream";
+      if (att.filename) res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(att.filename)}`);
       if (att.omitContentLength) {
         res.writeHead(200, { "content-type": type });
         const cut = Math.min(1, body.length);

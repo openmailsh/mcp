@@ -67,7 +67,7 @@ export function formatThread(thread: {
     subject?: string | null;
     autoReplyable?: boolean | null;
     category?: string | null;
-    attachments?: Array<{ filename: string }>;
+    attachments?: Array<{ id?: string; filename: string }>;
   }>;
 }): string {
   const lines = [
@@ -101,8 +101,11 @@ export function formatThread(thread: {
     const isForward = /^\s*(fwd?|wg|tr|rv|enc)\s*:/i.test(message.subject || thread.subject || "");
     lines.push(clip((isForward ? body.trim() : stripQuotedReply(body)) || "(empty body)", 6000));
     if (message.attachments?.length) {
+      const files = message.attachments.map(file =>
+        file.id ? `${file.filename} (attachment_id: ${file.id})` : file.filename,
+      );
       lines.push(
-        `attachments: ${message.attachments.map((a) => a.filename).join(", ")} (get_attachment for the file, get_attachment_text for extracted text; message_id ${message.id})`,
+        `attachments: ${files.join(", ")} (get_attachment for the file, get_attachment_text for extracted text; message_id ${message.id})`,
       );
     }
     lines.push("");
