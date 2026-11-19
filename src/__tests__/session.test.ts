@@ -27,6 +27,15 @@ describe("parseSessionFromUrl", () => {
 });
 
 describe("visibleTools", () => {
+  it.each(["edit_draft", "delete_draft"])("requires send scope and writable mailbox access for %s", (tool) => {
+    expect(visibleTools(base({ authKind: "oauth", scopes: ["read", "send"] }))).toContain(tool);
+    expect(visibleTools(base({ authKind: "oauth", scopes: ["read", "setup", "domains"] }))).not.toContain(tool);
+    expect(visibleTools(base({ authKind: "oauth", scopes: ["read", "delete_drafts"] }))).not.toContain(tool);
+    expect(visibleTools(base({ authKind: "oauth", scopes: ["read", "send"], readonly: true }))).not.toContain(tool);
+    expect(visibleTools(base({ readonly: true }))).not.toContain(tool);
+    expect(visibleTools(base({ toolsets: new Set(["docs"]) }))).not.toContain(tool);
+    expect(visibleTools(base({ apiKeyInboxId: "inbox-1" }))).toContain(tool);
+  });
   it("exposes only docs when unauthenticated", () => {
     expect(
       visibleTools(base({ authKind: "none", token: null })),
@@ -65,6 +74,8 @@ describe("visibleTools", () => {
       "mark_thread_read",
       "send_email",
       "create_draft",
+      "edit_draft",
+      "delete_draft",
       "send_draft",
       "reply_to_thread",
       "create_inbox",
