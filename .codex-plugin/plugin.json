@@ -126,7 +126,7 @@
         "commerce": false
       },
       "publication": {
-        "release_notes": "Adds edit_draft and delete_draft. Edit a saved draft's recipients, subject or HTML body without sending, and discard drafts you no longer need. Both check the version you reviewed, so newer edits are never overwritten or deleted. Draft bodies are now HTML, with the plain-text version generated automatically. Editing and deleting need send permission; read-only connections can still list and read drafts."
+        "release_notes": "Adds email drafts: create_draft, list_drafts, get_draft, edit_draft, send_draft and delete_draft. Save HTML drafts in their sending inbox, including replies and forwards linked to the source thread, with attachments. Edit them without sending, then send or discard the version you reviewed; newer edits are never overwritten, sent or deleted by mistake. Creating, editing, sending and deleting need send permission; read-only connections can list and read drafts."
       }
     }
   }
