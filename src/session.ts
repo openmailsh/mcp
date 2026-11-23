@@ -92,12 +92,24 @@ function hasScope(ctx: SessionContext, scope: string): boolean {
   return ctx.scopes?.includes(scope) ?? false;
 }
 
-export function visibleTools(ctx: SessionContext): ToolName[] {
+export function sessionToolAccess(ctx: SessionContext) {
   const tools: ToolName[] = [];
+  const missingConsent = new Map<string, string>();
   if (ctx.toolsets.has("docs")) {
     tools.push("search_docs", "get_docs");
   }
-  if (ctx.authKind === "none") return tools;
+  if (ctx.authKind === "none") return { tools, missingConsent };
+
+  // Record a consent hint only where this scope would make the tool available.
+  function addWrites(scope: "send" | "domains", ...names: ToolName[]) {
+    if (ctx.readonly) return;
+    if (hasScope(ctx, scope)) {
+      tools.push(...names);
+    } else if (ctx.authKind === "oauth") {
+      const label = scope === "send" ? "Send mail" : "Domains";
+      for (const name of names) missingConsent.set(name, label);
+    }
+  }
 
   tools.push("auth_me", "send_mcp_feedback");
 
@@ -116,9 +128,7 @@ export function visibleTools(ctx: SessionContext): ToolName[] {
     tools.push("get_inbox", "list_unread_threads", "read_thread", "get_attachment", "get_attachment_text", "search_mail", "list_drafts", "get_draft");
     // Marking read is a write (PATCH /v1/threads/:id); readonly sessions get none.
     if (!ctx.readonly) tools.push("mark_thread_read");
-    if (!ctx.readonly && hasScope(ctx, "send")) {
-      tools.push("send_email", "reply_to_thread", "forward_message", "create_draft", "edit_draft", "send_draft", "delete_draft");
-    }
+    addWrites("send", "send_email", "reply_to_thread", "forward_message", "create_draft", "edit_draft", "send_draft", "delete_draft");
     // The API refuses these to OAuth tokens (no consent scope covers them)
     // and to scoped keys, so only list them where they can succeed.
     if (!ctx.readonly && ctx.authKind === "api_key") {
@@ -132,12 +142,14 @@ export function visibleTools(ctx: SessionContext): ToolName[] {
 
   if (ctx.toolsets.has("domains") && !ctx.apiKeyInboxId) {
     tools.push("list_domains", "get_domain");
-    if (!ctx.readonly && hasScope(ctx, "domains")) {
-      tools.push("add_domain", "verify_domain");
-    }
+    addWrites("domains", "add_domain", "verify_domain");
   }
 
-  return tools;
+  return { tools, missingConsent };
+}
+
+export function visibleTools(ctx: SessionContext): ToolName[] {
+  return sessionToolAccess(ctx).tools;
 }
 
 /** Explain denied setup calls without registering or executing those tools. */
