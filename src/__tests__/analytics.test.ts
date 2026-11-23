@@ -9,7 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { PostHog } from "posthog-node";
 import { SignJWT } from "jose";
-import { redactMailContent } from "../analytics.js";
+import { beforeSendAnalytics, redactMailContent } from "../analytics.js";
 import { startFakeOpenMailApi, type FakeOpenMailApi, type FakeState } from "./helpers/fake-openmail-api.js";
 
 const ACCOUNT_KEY = "om_account_key";
@@ -112,6 +112,42 @@ describe("redactMailContent", () => {
       expect(out.properties.$mcp_response).toBeUndefined();
       expect(out.properties.$mcp_parameters).toEqual({ request: { params: { arguments: {} } } });
     }
+  });
+
+  it("drops the exception for a tool name that does not exist, and keeps the tool call", () => {
+    const exception = {
+      distinct_id: "cust-1",
+      event: "$exception",
+      properties: {
+        $exception_list: [{ type: "Error", value: "MCP error -32602: Tool send_email not found" }],
+      },
+    };
+    expect(beforeSendAnalytics(exception)).toBeNull();
+
+    const call = {
+      distinct_id: "cust-1",
+      event: "$mcp_tool_call",
+      properties: {
+        $mcp_tool_name: "send_email",
+        $mcp_is_error: true,
+        $mcp_error_message: "MCP error -32602: Tool send_email not found",
+      },
+    };
+    expect(beforeSendAnalytics(call)).toMatchObject({ event: "$mcp_tool_call" });
+  });
+
+  it("keeps a real tool failure as an exception", () => {
+    const exception = {
+      distinct_id: "cust-1",
+      event: "$exception",
+      properties: {
+        $exception_list: [{ type: "Error", value: "Daily send limit reached" }],
+        $mcp_response: "secret",
+      },
+    };
+    const out = beforeSendAnalytics(exception);
+    expect(out).not.toBeNull();
+    expect(out && "properties" in out ? out.properties.$mcp_response : undefined).toBeUndefined();
   });
 
   it("keeps the response for the public docs tools", () => {
