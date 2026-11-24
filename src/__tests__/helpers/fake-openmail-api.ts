@@ -17,6 +17,7 @@ export type FakeMessage = {
   toAddr?: string;
   toRecipients?: string[];
   headerTo?: string | null;
+  deliveryRole?: string | null;
   createdAt?: string;
   bodyText?: string | null;
   autoReplyable?: boolean | null;

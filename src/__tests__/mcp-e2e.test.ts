@@ -568,13 +568,17 @@ describe("mailbox tools", () => {
 
   it("omits the envelope address when forwarding a message with no visible To", async () => {
     const client = await connect("/mcp", INBOX_A_KEY);
-    api.state.threads["thread-a1"].messages = [{
-      id: "hidden", direction: "inbound", fromAddr: "sender@example.com", toAddr: "private@example.com",
-      toRecipients: [], bodyText: "Hello",
-    }];
-    const result = await call(client, "forward_message", { thread_id: "thread-a1", to: "reader@example.com" });
-    expect(result.isError).toBe(false);
-    expect(api.calls("POST", /\/send$/)[0].body).toMatchObject({ body: expect.not.stringContaining("private@example.com") });
+    for (const visibility of [{ toRecipients: [] }, { headerTo: null, deliveryRole: "cc" }]) {
+      api.state.threads["thread-a1"].messages = [{
+        id: "hidden", direction: "inbound", fromAddr: "sender@example.com", toAddr: "private@example.com",
+        ...visibility, bodyText: "Hello",
+      }];
+      const result = await call(client, "forward_message", { thread_id: "thread-a1", to: "reader@example.com" });
+      expect(result.isError).toBe(false);
+    }
+    const sends = api.calls("POST", /\/send$/);
+    expect(sends).toHaveLength(2);
+    for (const request of sends) expect(request.body).toMatchObject({ body: expect.not.stringContaining("private@example.com") });
   });
 
   it("send_email forwards unsubscribe only when true", async () => {

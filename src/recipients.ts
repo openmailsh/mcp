@@ -15,6 +15,7 @@ export function recipientInput(draft = false) {
 export type MessageRecipients = {
   toRecipients?: string[];
   headerTo?: string | null;
+  deliveryRole?: string | null;
   toAddr?: string;
 };
 
@@ -22,7 +23,7 @@ export function messageTo(message: MessageRecipients): string | string[] | undef
   if (message.toRecipients) {
     return message.toRecipients.length > 1 ? message.toRecipients : message.toRecipients[0];
   }
-  return message.headerTo ?? message.toAddr;
+  return message.headerTo ?? (message.deliveryRole === "cc" ? undefined : message.toAddr);
 }
 
 export function recipientText(value: string | string[] | null | undefined): string {
