@@ -533,6 +533,50 @@ describe("mailbox tools", () => {
     });
   });
 
+  it("sends, replies and forwards to ordered primary recipients", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    const to = ["first@example.com", "second@example.com"];
+    const send = await call(client, "send_email", { subject: "Meet", body: "Hello", to });
+    const reply = await call(client, "reply_to_thread", { thread_id: "thread-a1", body: "Hello", to });
+    const forward = await call(client, "forward_message", { thread_id: "thread-a1", to });
+    for (const result of [send, reply, forward]) {
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain(to.join(", "));
+    }
+    const requests = api.calls("POST", /\/send$/);
+    expect(requests).toHaveLength(3);
+    for (const request of requests) expect(request.body).toMatchObject({ to });
+    expect(requests[1].body).toMatchObject({ threadId: "thread-a1" });
+
+    for (const invalid of [[], [...to, "invalid"], "first@example.com,invalid"]) {
+      expect((await call(client, "send_email", { subject: "Meet", body: "Hello", to: invalid })).isError).toBe(true);
+    }
+    expect(api.calls("POST", /\/send$/)).toHaveLength(3);
+  });
+
+  it("reads and searches all recipients and follows up to the complete previous To list", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    const to = ["first@example.com", "second@example.com"];
+    api.state.threads["thread-a1"].messages = [{
+      id: "out", direction: "outbound", fromAddr: "a@omail.sh", toAddr: to[0], toRecipients: to, bodyText: "Hello",
+    }];
+    expect((await call(client, "read_thread", { thread_id: "thread-a1" })).text).toContain(to.join(", "));
+    expect((await call(client, "search_mail", { query: "second@example.com" })).text).toContain(to.join(", "));
+    expect((await call(client, "reply_to_thread", { thread_id: "thread-a1", body: "Following up" })).isError).toBe(false);
+    expect(api.calls("POST", /\/send$/)[0].body).toMatchObject({ to });
+  });
+
+  it("omits the envelope address when forwarding a message with no visible To", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    api.state.threads["thread-a1"].messages = [{
+      id: "hidden", direction: "inbound", fromAddr: "sender@example.com", toAddr: "private@example.com",
+      toRecipients: [], bodyText: "Hello",
+    }];
+    const result = await call(client, "forward_message", { thread_id: "thread-a1", to: "reader@example.com" });
+    expect(result.isError).toBe(false);
+    expect(api.calls("POST", /\/send$/)[0].body).toMatchObject({ body: expect.not.stringContaining("private@example.com") });
+  });
+
   it("send_email forwards unsubscribe only when true", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     await call(client, "send_email", { to: "x@example.com", subject: "s", body: "b", inbox_id: "inbox-a", unsubscribe: true });
@@ -1437,15 +1481,16 @@ describe("email drafts", () => {
     expect((await call(client, "create_draft", { inbox_id: "inbox-b", source_thread_id: "thread-a1" })).isError).toBe(true);
   });
 
-  it("uploads regular files and referenced inline images as multipart with repeated recipients", async () => {
+  it("uploads files and complete To, Cc and Bcc lists in one multipart field each", async () => {
     const client = await connect("/mcp", INBOX_A_KEY);
     const cid = "inline-01234567-89ab-cdef-0123-456789abcdef@openmail";
     const html = `<p>See report</p><img src="cid:${cid}">`;
     const bytes = Buffer.from([0, 128, 255]);
     const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRXsAAAAASUVORK5CYII=";
+    const to = ["main@example.com", "second@example.com"];
     const cc = ["one@example.com", "two@example.com"];
     const saved = await call(client, "create_draft", {
-      thread_id: "thread-a1", body_html: html, cc, bcc: ["private@example.com"],
+      thread_id: "thread-a1", body_html: html, to, cc, bcc: ["private@example.com"],
       attachments: [{ filename: "report.bin", content_type: "application/octet-stream", content_base64: bytes.toString("base64") }],
       inline_images: [{ content_id: cid, content_type: "image/png", content_base64: png }],
     });
@@ -1458,8 +1503,16 @@ describe("email drafts", () => {
     expect(form.get("inboxId")).toBe("inbox-a");
     expect(form.get("bodyHtml")).toBe(html);
     expect(form.get("threadId")).toBe("thread-a1");
-    expect(form.getAll("cc")).toEqual(cc);
-    expect(form.getAll("bcc")).toEqual(["private@example.com"]);
+    expect(form.get("to")).toBe(JSON.stringify(to));
+    expect(form.get("cc")).toBe(JSON.stringify(cc));
+    expect(form.get("bcc")).toBe(JSON.stringify(["private@example.com"]));
+    expect(saved.text).toContain("To: " + to.join(", "));
+    const draft = api.state.drafts![0];
+    const replacement = [...to].reverse();
+    const edited = await call(client, "edit_draft", { draft_id: draft.id, updated_at: draft.updatedAt, to: replacement });
+    expect(edited.isError).toBe(false);
+    expect(edited.text).toContain("To: " + replacement.join(", "));
+    expect(api.calls("PATCH", /\/v1\/drafts\//)[0].body).toMatchObject({ to: replacement });
     const file = form.get("attachments") as File;
     expect(Buffer.from(await file.arrayBuffer())).toEqual(bytes);
     const image = form.get("inlineImages") as File;
