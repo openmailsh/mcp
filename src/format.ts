@@ -16,6 +16,46 @@ export function formatInboxes(
     .join("\n");
 }
 
+export type MailFolder = {
+  id: number;
+  name: string;
+  role: "inbox" | "sent" | "drafts" | "trash" | "archive" | "junk" | null;
+};
+
+export function formatFolders(inboxId: string, folders: MailFolder[]): string {
+  if (!folders.length) return `No folders in inbox ${inboxId}.`;
+  return [
+    `Folders in inbox ${inboxId}:`,
+    ...folders.map(folder => `- ${folder.name} · folder_id: ${folder.id} · ${folder.role ? `role: ${folder.role}` : "custom folder"}`),
+  ].join("\n");
+}
+
+export type FolderItem = {
+  id: string;
+  kind: "message" | "draft";
+  subject: string | null;
+  threadId: string | null;
+  createdAt: string;
+  fromAddr: string;
+  toAddr: string | null;
+  toRecipients?: string[];
+};
+
+export function formatFolderMessages(inboxId: string, folderId: number, rows: FolderItem[], total: number, offset: number): string {
+  const location = `folder ${folderId} in inbox ${inboxId}`;
+  if (!rows.length) return `No items on this page of ${location}. Total: ${total}. Offset: ${offset}.`;
+  const nextOffset = offset + rows.length;
+  return [
+    `Items in ${location}: ${offset + 1}–${nextOffset} of ${total}`,
+    ...rows.map(row => {
+      const to = row.toRecipients?.join(", ") || row.toAddr || "(no recipient)";
+      const thread = row.threadId ? ` · thread: ${row.threadId}` : "";
+      return `- ${row.subject || "(no subject)"} · ${formatTimestamp(row.createdAt)}\n  From: ${row.fromAddr} · To: ${to}\n  ${row.kind}: ${row.id}${thread}`;
+    }),
+    ...(nextOffset < total ? [`More items: call list_folder_messages with offset ${nextOffset}.`] : []),
+  ].join("\n");
+}
+
 export function formatInbox(row: {
   id: string;
   address: string;

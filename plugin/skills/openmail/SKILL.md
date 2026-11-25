@@ -22,6 +22,10 @@ Before you act on a thread, `read_thread` the whole of it. Replies written from 
 
 When `read_thread` lists attachments, pass the message's `message_id` and the file's `attachment_id` to `get_attachment` (the file) or `get_attachment_text` (extracted text). If an older message has no attachment ID, pass its `filename`. Use `get_attachment` to look at an image or hand a file on: images come back as image content, other files as an embedded resource. Files over 4 MB are refused — there is no signed download link — and `get_attachment_text` is the fallback for PDF, Office, and OCR text.
 
+## Browse folders
+
+For "show my folders" or "what is in Sent?", call `list_folders` for the intended inbox. Choose the returned folder ID by its role or full custom path, then call `list_folder_messages` with that `folder_id` and the same `inbox_id`. Follow the returned offset for more items. Use `get_draft` for a draft item and `read_thread` for a message with a thread ID.
+
 ## Drafts
 
 When asked to discard a draft, identify it with `get_draft` and call `delete_draft` with its ID and exact `updated_at`. This permanently deletes the draft and its files without sending. Optional `inbox_id` must match the owner. On `draft_changed`, review the current draft and verify it is still the one the user wants discarded; never automatically refresh the version and retry. On `draft_sending`, check the draft and sent mail; deletion cannot cancel an accepted or pending send. A missing draft may already have been deleted or sent, so do not claim this request deleted it. Read-only connections cannot delete. OAuth connections use the same `send` scope as draft creation, editing and sending. If missing, reconnect with **Send mail** enabled and refresh tools. Existing send grants already cover deletion.

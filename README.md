@@ -36,6 +36,12 @@ Keys and transcripts: over OAuth (Claude, Cursor sign-in) `setup_agent_email` an
 
 **stdio-only clients:** `npx -y mcp-remote https://mcp.openmail.sh/mcp`
 
+## Folders
+
+Call `list_folders` with an `inbox_id` to get the names and numeric IDs of its standard and custom folders, including empty folders. To browse Sent, for example, use the ID of the folder whose role is `sent`. Pass that `folder_id` and the same `inbox_id` to `list_folder_messages`. Both tools are available on read-only connections.
+
+Results are newest first. Use `limit` (1–100, default 50) and `offset` (default 0) to page through a folder. Drafts can contain both filed messages and editable drafts. Use the returned item kind and ID to distinguish them.
+
 ## Drafts
 
 `delete_draft` permanently discards an unsent draft and its attachments when the user requests it. Read the draft first and supply `draft_id` and its exact `updated_at`; optional `inbox_id` checks ownership. Deletion never sends mail or cancels a send. A stale version requires reviewing the current draft before another attempt; pending or accepted sends block deletion. Missing drafts return an error, including after a successful prior deletion. Never automatically substitute a newer version or retry deletion.
