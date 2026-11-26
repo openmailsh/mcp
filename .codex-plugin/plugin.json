@@ -1,6 +1,6 @@
 {
   "name": "openmail",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Email inbox for AI agents. Read, send and reply to mail, manage drafts and custom domains",
   "author": {
     "name": "OpenMail",
@@ -37,6 +37,12 @@
       "review": {
         "test_cases": {
           "positive": [
+            {
+              "description": "Browse the Sent folder",
+              "prompt": "Show the five most recent items in my Sent folder.",
+              "tools_triggered": "list_folders, list_folder_messages",
+              "expected_behavior": "Looks up the folder with the sent role and lists up to five items using its numeric ID in the same inbox."
+            },
             {
               "description": "Summarise mail that needs a reply",
               "prompt": "Check my OpenMail inbox and summarise anything that needs a reply.",
@@ -126,7 +132,7 @@
         "commerce": false
       },
       "publication": {
-        "release_notes": "Adds email drafts: create_draft, list_drafts, get_draft, edit_draft, send_draft and delete_draft. Save HTML drafts in their sending inbox, including replies and forwards linked to the source thread, with attachments. Edit them without sending, then send or discard the version you reviewed; newer edits are never overwritten, sent or deleted by mistake. Creating, editing, sending and deleting need send permission; read-only connections can list and read drafts."
+        "release_notes": "Browse standard and custom mail folders with list_folders and list_folder_messages. See the newest items first and page through older ones. The Drafts folder includes both filed messages and editable drafts. Both tools work on read-only connections."
       }
     }
   }

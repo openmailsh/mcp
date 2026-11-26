@@ -50,9 +50,10 @@ export function formatFolderMessages(inboxId: string, folderId: number, rows: Fo
   return [
     `Items in ${location}: ${offset + 1}–${nextOffset} of ${total}`,
     ...rows.map(row => {
-      const to = row.toRecipients?.join(", ") || row.toAddr || "(no recipient)";
+      const to = recipientText(row.toRecipients ?? row.toAddr);
+      const recipients = to ? ` · To: ${to}` : "";
       const thread = row.threadId ? ` · thread: ${row.threadId}` : "";
-      return `- ${row.subject || "(no subject)"} · ${formatTimestamp(row.createdAt)}\n  From: ${row.fromAddr} · To: ${to}\n  ${row.kind}: ${row.id}${thread}`;
+      return `- ${row.subject || "(no subject)"} · ${formatTimestamp(row.createdAt)}\n  From: ${row.fromAddr}${recipients}\n  ${row.kind}: ${row.id}${thread}`;
     }),
     ...(nextOffset < total ? [`More items: call list_folder_messages with offset ${nextOffset}.`] : []),
   ].join("\n");

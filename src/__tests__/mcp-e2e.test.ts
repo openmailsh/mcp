@@ -545,6 +545,19 @@ describe("mail folders", () => {
     expect((await call(client, "list_folder_messages", { folder_id: 999 })).isError).toBe(true);
     expect(api.calls("GET", /\/folders/).every(request => request.token === INBOX_A_KEY)).toBe(true);
   });
+
+  it("omits a blind-copy envelope address from the visible recipients", async () => {
+    api.state.folders!["inbox-a"][0].items = [{
+      kind: "message", id: "blind-copy", subject: "Receipt", threadId: "thread-b",
+      fromAddr: "sender@example.com", toAddr: "blind@example.com", toRecipients: [],
+      createdAt: "2026-09-13T10:00:00Z",
+    }];
+    const client = await connect("/mcp/readonly", await oauthToken("read"));
+    const result = await call(client, "list_folder_messages", { folder_id: 12 });
+    expect(result.text).toContain("message: blind-copy");
+    expect(result.text).not.toContain("To:");
+    expect(result.text).not.toContain("blind@example.com");
+  });
 });
 
 describe("mailbox tools", () => {
