@@ -7,7 +7,7 @@
  */
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import type { Draft } from "../../format.js";
+import type { Draft, FolderItem, MailFolder } from "../../format.js";
 import type { MeResponse } from "../../openmail.js";
 
 export type FakeMessage = {
@@ -64,6 +64,7 @@ export type FakeState = {
   threads: Record<string, FakeThread>;
   attachments: Record<string, FakeAttachment>;
   drafts?: Draft[];
+  folders?: Record<string, Array<MailFolder & { items: FolderItem[] }>>;
   draftSendFailure?: { status: number; body: { error: string; message: string } };
   /** When set, GET /v1/me answers with this instead of looking the token up (simulates an API outage). */
   meFailure?: { status: number; body?: unknown };
@@ -160,6 +161,17 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
     if (method === "GET" && path === "/v1/me") return json(200, me);
 
     if (method === "GET" && path === "/v1/inboxes") return json(200, { data: state.inboxes });
+
+    if (method === "GET" && (m = path.match(/^\/v1\/inboxes\/([^/]+)\/folders(?:\/(\d+)\/messages)?$/))) {
+      const [, inboxId, folderId] = m;
+      const folders = state.folders?.[inboxId] ?? [];
+      if (!folderId) return json(200, { data: folders.map(({ id, name, role }) => ({ id, name, role })) });
+      const folder = folders.find(row => row.id === Number(folderId));
+      if (!folder) return json(404, { error: "not_found", message: "Folder not found" });
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const limit = Number(url.searchParams.get("limit") ?? 50);
+      return json(200, { data: folder.items.slice(offset, offset + limit), total: folder.items.length });
+    }
 
     const draftScope = me.apiKeyScope === "account" ? null : me.apiKeyScope;
     const visibleDraft = (draft: Draft) => !draftScope || (!!draft.inboxId &&

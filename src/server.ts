@@ -20,6 +20,10 @@ import {
   formatDns,
   formatInbox,
   formatInboxes,
+  formatFolders,
+  formatFolderMessages,
+  type MailFolder,
+  type FolderItem,
   formatMe,
   formatThread,
   formatSearch,
@@ -279,6 +283,8 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   auth_me: read("Who am I"),
   list_inboxes: read("List inboxes"),
   get_inbox: read("Show inbox"),
+  list_folders: read("List mail folders"),
+  list_folder_messages: read("Browse a mail folder"),
   list_drafts: read("List email drafts"),
   get_draft: read("Read email draft"),
   send_draft: hints("Send saved draft", false, true, true, true),
@@ -614,6 +620,52 @@ export function createMcpServer(input: {
         displayName?: string | null;
       };
       return text(formatInbox(inbox));
+    },
+  );
+
+  add(
+    "list_folders",
+    toolDesc({
+      purpose: "List the standard and custom folders of one inbox, including empty and nested folders.",
+      returns: "The inbox id and each folder's numeric id, full name and role.",
+      when: "The user wants to see their folders or you need a folder id to browse.",
+      notFor: "Listing the messages inside a folder. Use list_folder_messages with its id.",
+      triggers: "list my folders, show mailbox folders, find my Sent folder",
+    }),
+    { inbox_id: INBOX_ID },
+    async (args) => {
+      if (!api) return signIn();
+      const inboxId = await resolveInboxId(ctx, api, args.inbox_id as string | undefined);
+      const folders = await api.get(`/v1/inboxes/${encodeURIComponent(inboxId)}/folders`) as { data: MailFolder[] };
+      return text(formatFolders(inboxId, folders.data));
+    },
+  );
+
+  add(
+    "list_folder_messages",
+    toolDesc({
+      purpose: "Browse messages and drafts in a folder of one inbox, newest first.",
+      returns: "Item kinds and ids, subjects, senders, recipients, timestamps, available thread ids and pagination.",
+      when: "The user wants the contents of a standard or custom folder, including Sent, Archive, Junk or Trash.",
+      notFor: "Searching message bodies. Use search_mail for a text query.",
+      triggers: "show sent mail, browse my archive, what's in my receipts folder",
+    }),
+    {
+      inbox_id: INBOX_ID,
+      folder_id: z.number().int().min(1).max(2147483647).describe("Numeric folder id from list_folders for this inbox."),
+      limit: z.number().int().min(1).max(100).optional().describe("Items per page. Defaults to 50."),
+      offset: z.number().int().min(0).max(2147483647).optional().describe("Number of items to skip. Defaults to 0."),
+    },
+    async (args) => {
+      if (!api) return signIn();
+      const inboxId = await resolveInboxId(ctx, api, args.inbox_id as string | undefined);
+      const folderId = args.folder_id as number;
+      const offset = (args.offset as number | undefined) ?? 0;
+      const params = new URLSearchParams({ limit: String(args.limit ?? 50), offset: String(offset) });
+      const page = await api.get(`/v1/inboxes/${encodeURIComponent(inboxId)}/folders/${folderId}/messages?${params}`) as {
+        data: FolderItem[]; total: number;
+      };
+      return text(formatFolderMessages(inboxId, folderId, page.data, page.total, offset));
     },
   );
 

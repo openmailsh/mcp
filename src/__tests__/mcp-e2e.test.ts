@@ -236,7 +236,7 @@ describe("tools/list", () => {
     expect(await toolNames(client)).toEqual(
       sorted([
         "search_docs", "get_docs", "auth_me", "send_mcp_feedback",
-        "get_inbox", "list_unread_threads", "read_thread", "get_attachment", "get_attachment_text", "search_mail",
+        "get_inbox", "list_folders", "list_folder_messages", "list_unread_threads", "read_thread", "get_attachment", "get_attachment_text", "search_mail",
         "list_drafts", "get_draft", "delete_draft", "create_draft", "edit_draft", "send_draft",
         "mark_thread_read", "send_email", "reply_to_thread", "forward_message",
       ]),
@@ -493,6 +493,72 @@ describe("inbox lock", () => {
 // ---------------------------------------------------------------------------
 // Mailbox loop
 // ---------------------------------------------------------------------------
+
+describe("mail folders", () => {
+  beforeEach(() => {
+    api.state.folders = {
+      "inbox-a": [
+        { id: 12, name: "Finance/Receipts", role: null, items: [] },
+        { id: 26, name: "Drafts", role: "drafts", items: [
+          { id: "draft-a", kind: "draft", threadId: null, subject: null, fromAddr: "a@omail.sh",
+            toAddr: null, createdAt: "2026-09-12T10:00:00Z" },
+          { id: "message-a", kind: "message", threadId: "thread-a", subject: "Filed message", fromAddr: "sender@example.com",
+            toAddr: "a@omail.sh", toRecipients: ["a@omail.sh", "b@omail.sh"], createdAt: "2026-09-10T10:00:00Z" },
+        ] },
+      ],
+    };
+  });
+
+  it("discovers nested and empty folders and pages through mixed items on a read-only connection", async () => {
+    const client = await connect("/mcp/readonly", await oauthToken("read"));
+    const folders = await call(client, "list_folders");
+    expect(folders.isError).toBe(false);
+    expect(folders.text).toContain("Folders in inbox inbox-a");
+    expect(folders.text).toContain("Finance/Receipts · folder_id: 12 · custom folder");
+    expect(folders.text).toContain("Drafts · folder_id: 26 · role: drafts");
+
+    const page = { inbox_id: "inbox-a", folder_id: 26, limit: 1 };
+    const first = await call(client, "list_folder_messages", page);
+    expect(first.text).toContain("1–1 of 2");
+    expect(first.text).toContain("draft: draft-a");
+    expect(first.text).toContain("offset 1");
+    const second = await call(client, "list_folder_messages", { ...page, offset: 1 });
+    expect(second.text).toContain("message: message-a · thread: thread-a");
+    expect(second.text).toContain("To: a@omail.sh, b@omail.sh");
+    expect(second.text).not.toContain("More items");
+    const empty = await call(client, "list_folder_messages", { folder_id: 12 });
+    expect(empty.isError).toBe(false);
+    expect(empty.text).toContain("Total: 0");
+    expect(api.calls("GET", /^\/v1\/inboxes\/inbox-a\/folders\/12\/messages\?limit=50&offset=0$/)).toHaveLength(1);
+    expect(api.requests.every(request => request.method === "GET")).toBe(true);
+  });
+
+  it("honors a locked inbox and validates folder ids and page bounds before requesting a folder", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    expect((await call(client, "list_folders", { inbox_id: "inbox-b" })).isError).toBe(true);
+    expect((await call(client, "list_folder_messages", { inbox_id: "inbox-b", folder_id: 26 })).isError).toBe(true);
+    for (const args of [{ folder_id: 0 }, { folder_id: 2147483648 }, { folder_id: 26, limit: 101 }, { folder_id: 26, offset: -1 }]) {
+      expect((await call(client, "list_folder_messages", args)).isError).toBe(true);
+    }
+    expect(api.calls("GET", /\/folders/)).toHaveLength(0);
+    expect((await call(client, "list_folders")).text).toContain("inbox-a");
+    expect((await call(client, "list_folder_messages", { folder_id: 999 })).isError).toBe(true);
+    expect(api.calls("GET", /\/folders/).every(request => request.token === INBOX_A_KEY)).toBe(true);
+  });
+
+  it("omits a blind-copy envelope address from the visible recipients", async () => {
+    api.state.folders!["inbox-a"][0].items = [{
+      kind: "message", id: "blind-copy", subject: "Receipt", threadId: "thread-b",
+      fromAddr: "sender@example.com", toAddr: "blind@example.com", toRecipients: [],
+      createdAt: "2026-09-13T10:00:00Z",
+    }];
+    const client = await connect("/mcp/readonly", await oauthToken("read"));
+    const result = await call(client, "list_folder_messages", { folder_id: 12 });
+    expect(result.text).toContain("message: blind-copy");
+    expect(result.text).not.toContain("To:");
+    expect(result.text).not.toContain("blind@example.com");
+  });
+});
 
 describe("mailbox tools", () => {
   it("reply_to_thread posts to the thread's inbox with the inbound sender and threadId", async () => {

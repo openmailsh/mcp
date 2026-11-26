@@ -124,6 +124,8 @@ describe("visibleTools", () => {
         "send_mcp_feedback",
         "list_inboxes",
         "get_inbox",
+        "list_folders",
+        "list_folder_messages",
         "list_drafts",
         "get_draft",
         "list_unread_threads",
@@ -136,7 +138,7 @@ describe("visibleTools", () => {
         "get_domain",
       ].sort(),
     );
-    expect(tools).toHaveLength(16);
+    expect(tools).toHaveLength(18);
   });
 });
 
