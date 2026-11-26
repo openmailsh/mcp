@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { recipientInput } from "./recipients.js";
 
 const fileBytes = z.string()
   .regex(/^[A-Za-z0-9+/]*={0,2}$/, "Expected base64 file content")
@@ -18,7 +19,7 @@ export const draftFields = z.object({
   inbox_id: z.string().min(1).describe("Inbox that owns and sends this draft. Use the inbox of the source thread when composing from a conversation."),
   thread_id: z.string().min(1).optional().describe("Reply in this thread and inherit its subject. The reply also appears under this source thread."),
   source_thread_id: z.string().min(1).optional().describe("Conversation this draft was composed from. For forwards, pass this alone. If thread_id is supplied the two IDs must match."),
-  to: z.string().email().max(320).optional().describe("Recipient, if known."),
+  to: recipientInput(true).optional().describe("Visible To recipients, if known. Pass one address or an ordered list of up to 100."),
   cc: z.array(z.string().email().max(320)).max(100).optional().describe("Visible copy recipients."),
   bcc: z.array(z.string().email().max(320)).max(100).optional().describe("Blind copy recipients."),
   subject: z.string().max(998).optional().describe("Draft subject. Replies inherit their subject from the thread."),
@@ -33,7 +34,7 @@ export const editDraftFields = z.object({
   draft_id: z.string().min(1).describe("Saved draft id from get_draft."),
   updated_at: z.string().datetime({ offset: true }).describe("Exact updated_at from the draft being edited. Never substitute a newer version without reconciling the requested changes."),
   inbox_id: z.string().min(1).optional().describe("Optional ownership check. Must match the original sending inbox."),
-  to: z.string().email().max(254).nullable().optional().describe("Replace the recipient, or null to clear it."),
+  to: recipientInput(true).nullable().optional().describe("Replace visible To recipients with one address or a list of up to 100. Use null or [] to clear."),
   cc: z.array(z.string().email().max(254)).max(100).optional().describe("Replace copy recipients; [] clears them."),
   bcc: z.array(z.string().email().max(254)).max(100).optional().describe("Replace blind-copy recipients; [] clears them."),
   subject: z.string().max(998).optional().describe("Replace the subject; empty string clears it. Reply drafts must retain their original subject."),
@@ -70,7 +71,7 @@ export function draftPayload(args: DraftInput, inboxId: string): FormData | Reco
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) {
     if (value === undefined) continue;
-    for (const part of Array.isArray(value) ? value : [value]) form.append(key, part);
+    form.append(key, Array.isArray(value) ? JSON.stringify(value) : value);
   }
   for (const file of args.attachments ?? []) {
     form.append("attachments", new Blob([Buffer.from(file.content_base64, "base64")], { type: file.content_type }), file.filename);

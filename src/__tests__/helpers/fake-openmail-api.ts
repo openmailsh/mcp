@@ -15,6 +15,9 @@ export type FakeMessage = {
   direction: "inbound" | "outbound";
   fromAddr: string;
   toAddr?: string;
+  toRecipients?: string[];
+  headerTo?: string | null;
+  deliveryRole?: string | null;
   createdAt?: string;
   bodyText?: string | null;
   autoReplyable?: boolean | null;
@@ -106,6 +109,13 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
   } catch {
     return raw;
   }
+}
+
+function addresses(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(addresses);
+  if (typeof value !== "string" || !value) return [];
+  if (value.startsWith("[")) return JSON.parse(value);
+  return value.split(",").map(address => address.trim());
 }
 
 export function emptyState(): FakeState {
@@ -201,9 +211,9 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
       if (method === "POST" && !draftId) {
         const payload = body instanceof FormData ? {
           ...Object.fromEntries(body),
-          cc: body.getAll("cc"), bcc: body.getAll("bcc"),
+          to: addresses(body.getAll("to")), cc: addresses(body.getAll("cc")), bcc: addresses(body.getAll("bcc")),
         } : body;
-        const b = payload as { inboxId?: string; threadId?: string; sourceThreadId?: string; to?: string; cc?: string[]; bcc?: string[]; subject?: string; body?: string; bodyHtml?: string };
+        const b = payload as { inboxId?: string; threadId?: string; sourceThreadId?: string; to?: string | string[]; cc?: string[]; bcc?: string[]; subject?: string; body?: string; bodyHtml?: string };
         if (!b.inboxId) return json(400, { error: "inbox_required" });
         if (!state.inboxes.some(i => i.id === b.inboxId)) return json(404, { error: "not_found" });
         const sourceId = b.sourceThreadId ?? b.threadId;
@@ -223,7 +233,7 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
         const originalSubject = source?.subject || "(no subject)";
         const draft: Draft = {
           id: `draft-${++seq}`, inboxId: b.inboxId, threadId: b.threadId ?? null, sourceThreadId: sourceId ?? null,
-          to: b.to ?? null, cc: b.cc ?? [], bcc: b.bcc ?? [], attachments,
+          to: addresses(b.to).join(", ") || null, toRecipients: addresses(b.to), cc: b.cc ?? [], bcc: b.bcc ?? [], attachments,
           subject: b.threadId ? originalSubject.replace(/^(?:re:\s*)?/i, "Re: ") : b.subject ?? "",
           bodyText: b.bodyHtml === undefined ? null : String(b.bodyHtml).replace(/<[^>]*>/g, "").trim(), bodyHtml: b.bodyHtml || null,
           createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
@@ -245,7 +255,11 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
         if (input.updatedAt !== draft.updatedAt) return json(409, { error: "draft_changed", message: "This draft changed. Refresh before continuing." });
         if (input.inboxId && input.inboxId !== draft.inboxId) return json(400, { error: "draft_inbox_locked" });
         if (state.draftSendFailure?.body.error === "draft_sending") return json(409, state.draftSendFailure.body);
-        for (const field of ["to", "cc", "bcc", "subject", "bodyText", "bodyHtml"] as const) {
+        if (input.to !== undefined) {
+          draft.toRecipients = addresses(input.to);
+          draft.to = draft.toRecipients.join(", ") || null;
+        }
+        for (const field of ["cc", "bcc", "subject", "bodyText", "bodyHtml"] as const) {
           if (input[field] !== undefined) Object.assign(draft, { [field]: input[field] });
         }
         if (input.bodyHtml !== undefined) {
