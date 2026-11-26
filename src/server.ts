@@ -877,13 +877,14 @@ export function createMcpServer(input: {
     toolDesc({
       purpose: "Send a saved email draft using its stored recipients, content, attachments and reply thread, then remove it from Drafts on success.",
       notFor: "Saving or editing a draft, or sending without the user's instruction.",
-      when: "The user asks to send a saved draft you have reviewed with get_draft.",
-      triggers: "send this draft, send the saved email",
-      returns: "Sent message and thread ids. Failed sends retain the draft. A changed draft must be reviewed again.",
+      when: "The user asks to send or schedule a saved draft reviewed with get_draft.",
+      triggers: "send this draft, schedule the saved email",
+      returns: "For immediate sends, message and thread ids. For scheduled sends, the scheduled-send id and delivery time. Failed sends retain the draft. A changed draft must be reviewed again.",
     }),
     {
       inbox_id: z.string().min(1).optional().describe("Optional check that the saved draft belongs to this inbox. A draft always sends from its owning inbox."),
       draft_id: z.string().min(1).describe("Saved draft id from get_draft."),
+      send_at: z.string().datetime({ offset: true }).optional().describe("Requested delivery time, 30 seconds to 30 days ahead. Omit to send now."),
       updated_at: z.string().datetime({ offset: true }).describe("Exact updated_at from get_draft. Read and review the draft before sending; do not substitute a newly fetched version without review."),
     },
     async (args) => {
@@ -900,7 +901,11 @@ export function createMcpServer(input: {
       const sent = await api.post(`/v1/drafts/${encodeURIComponent(String(args.draft_id))}/send`, {
         updatedAt: args.updated_at,
         ...(inboxId ? { inboxId } : {}),
-      }) as { messageId: string; threadId: string; status: string };
+        ...(args.send_at !== undefined ? { sendAt: args.send_at } : {}),
+      }) as { id: string; sendAt: string; status: string } | { messageId: string; threadId: string; status: string };
+      if ("sendAt" in sent) {
+        return text(`Scheduled send: ${sent.id}\ntime: ${sent.sendAt}\nstatus: ${sent.status}`);
+      }
       return text(`Draft sent.\nmessage: ${sent.messageId}\nthread: ${sent.threadId}\nstatus: ${sent.status}`);
     },
   );
