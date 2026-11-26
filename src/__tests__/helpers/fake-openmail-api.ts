@@ -182,7 +182,7 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
       const draft = state.drafts?.find((row) => row.id === draftId);
       if (!draft) return json(404, { error: "not_found", message: "Draft not found" });
       if (!visibleDraft(draft)) return json(403, { error: "forbidden" });
-      const input = body as { updatedAt?: string; inboxId?: string };
+      const input = body as { updatedAt?: string; inboxId?: string; sendAt?: string };
       if (input.updatedAt !== draft.updatedAt) return json(409, { error: "draft_changed", message: "This draft changed. Refresh before continuing." });
       if (input.inboxId && input.inboxId !== draft.inboxId) return json(400, { error: "draft_inbox_locked", message: "A draft must use its original sending inbox." });
       if (!draft.to || !draft.subject || (!draft.bodyText && !draft.bodyHtml)) return json(400, { error: "incomplete_draft", message: "Complete the draft before sending." });
@@ -191,6 +191,7 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
         return json(state.draftSendFailure.status, state.draftSendFailure.body);
       }
       state.drafts = state.drafts!.filter((row) => row.id !== draftId);
+      if (input.sendAt) return json(202, { id: "scheduled-1", status: "scheduled", sendAt: input.sendAt });
       return json(200, { messageId: `msg-${++seq}`, threadId: draft.threadId ?? `thread-${seq}`, status: "sent" });
     }
     if ((m = path.match(/^\/v1\/drafts(?:\/([^/]+))?$/))) {

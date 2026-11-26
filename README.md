@@ -58,6 +58,8 @@ Use `edit_draft` with `draft_id` and the exact `updated_at` from `get_draft`. On
 
 Read the saved draft with `get_draft` and its `draft_id`. Review the owning inbox, recipients, text and HTML, thread context, and any attachments before sending. On the user’s instruction, call `send_draft` with the ID and exact `updated_at` from that review. An optional `inbox_id` must match the owner. A successful send removes the draft. Changed versions require another review, and failed or pending attempts retain the draft. Read-only connections can list and read drafts. Creation, editing, sending and deletion require write access and the OAuth `send` scope when using OAuth.
 
+To schedule the reviewed draft, pass the requested time in `send_at` with a timezone, 30 seconds to 30 days ahead. Once accepted, it leaves Drafts. Report the scheduled time and scheduled-send ID. Delivery happens later.
+
 ## Plugin packages
 
 The Codex/OpenAI, Claude, and Cursor plugins connect to the same hosted MCP server and use the shared `skills/openmail/SKILL.md` instructions. Their draft workflow is `create_draft` → `list_drafts` / `get_draft` → `edit_draft` as needed → `send_draft` after approval, or `delete_draft` when asked to discard it.

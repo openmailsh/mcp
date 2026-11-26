@@ -1363,6 +1363,21 @@ describe("email drafts", () => {
     expect(api.calls("POST", /\/inboxes\/[^/]+\/send$/)).toHaveLength(0);
   });
 
+  it("schedules a reviewed draft with its exact version and reports its scheduled-send ID", async () => {
+    const client = await connect("/mcp", await oauthToken("read send"));
+    await call(client, "create_draft", { inbox_id: "inbox-a", to: "reader@example.com", subject: "Ready", body_html: "<p>Ready</p>" });
+    const draft = api.state.drafts![0];
+    const sendAt = new Date(Date.now() + 3600000).toISOString();
+    const args = { draft_id: draft.id, updated_at: draft.updatedAt, send_at: sendAt };
+    expect((await call(client, "send_draft", { ...args, send_at: "" })).isError).toBe(true);
+    expect(api.calls("POST", /\/drafts\/[^/]+\/send$/)).toHaveLength(0);
+    const result = await call(client, "send_draft", args);
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("Scheduled send: scheduled-1");
+    expect(result.text).toContain(sendAt);
+    expect(api.calls("POST", /\/drafts\/[^/]+\/send$/)[0]?.body).toEqual({ updatedAt: draft.updatedAt, sendAt });
+  });
+
   it("sends the reviewed saved version once and removes the draft", async () => {
     const client = await connect("/mcp", await oauthToken("read send"));
     await call(client, "create_draft", { inbox_id: "inbox-a", to: "reader@example.com", subject: "Ready", body_html: "<p>Approved body</p>" });

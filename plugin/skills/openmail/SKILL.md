@@ -40,6 +40,8 @@ When asked to revise a saved draft, read it with `get_draft`, then call `edit_dr
 
 To send an approved draft, use `send_draft` with its `draft_id` and exact reviewed `updated_at`. Omit `inbox_id` or pass the owning inbox as a check. Creation, editing, sending and deletion require a writable connection and OAuth `send` scope when using OAuth. Read-only connections can list and read. A successful send preserves attachments and reply threading and removes the draft. If the version is stale, review the current content with the user before retrying. A failed or pending send retains the draft. Never bypass the saved version by copying it into `send_email`.
 
+If the installed tool lacks `send_at`, ask the user to update before scheduling. To schedule the reviewed draft, pass the requested time in `send_at` with a timezone, 30 seconds to 30 days ahead. Once accepted, it leaves Drafts. Report the scheduled time and scheduled-send ID. Delivery happens later.
+
 ## Sending
 
 Replying to something you received: `reply_to_thread` with the `thread_id`, always. It keeps the headers intact so the recipient's mail client shows one conversation. Starting a conversation that does not exist yet: `send_email` with `to`, `subject`, `body`.
