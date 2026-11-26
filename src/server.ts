@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { SessionContext, ToolName } from "./session.js";
 import { assertLockedInbox, lockedInboxId, setupToolUnavailableReason, visibleTools } from "./session.js";
 import { draftFields, draftPayload, editDraftFields, editDraftPayload, type DraftInput, type EditDraftInput } from "./draft.js";
+import { recipientInput, messageTo, recipientText, type MessageRecipients } from "./recipients.js";
 import { getDocs, searchDocs } from "./docs.js";
 import {
   ATTACHMENT_INLINE_LIMIT,
@@ -62,12 +63,11 @@ const UNREAD_MAX = 20;
 const SEARCH_SCAN = 500;
 const SEARCH_MAX = 25;
 
-type SearchHit = {
+type SearchHit = MessageRecipients & {
   id: string;
   threadId: string;
   direction: string;
   fromAddr: string;
-  toAddr?: string;
   subject?: string | null;
   bodyText?: string | null;
   createdAt?: string;
@@ -202,11 +202,10 @@ type ThreadMessages = {
   threadId: string;
   inboxId: string;
   subject: string | null;
-  data?: Array<{
+  data?: Array<MessageRecipients & {
     id: string;
     direction: string;
     fromAddr: string;
-    toAddr?: string;
     createdAt?: string;
     bodyText?: string | null;
     bodyHtml?: string | null;
@@ -863,7 +862,7 @@ export function createMcpServer(input: {
       triggers: "send an email, email this person",
     }),
     {
-      to: z.string().email().describe("Who the new email is for."),
+      to: recipientInput().describe("One visible primary recipient or an ordered list of To addresses."),
       subject: z.string().describe("Subject line of the new thread."),
       body: z.string().describe("Plain-text message body."),
       cc: CC_SCHEMA,
@@ -872,7 +871,7 @@ export function createMcpServer(input: {
         .boolean()
         .optional()
         .describe(
-          "Set true for cold outreach. Adds one-click unsubscribe headers (Gmail/Outlook show an Unsubscribe button) and fills {{unsubscribe_url}} in the body. A click suppresses the recipient account-wide. Only works with no cc or bcc. Automatic on shared OpenMail domains for new single-recipient emails.",
+          "Set true for cold outreach. Adds one-click unsubscribe headers (Gmail/Outlook show an Unsubscribe button) and fills {{unsubscribe_url}} in the body. A click suppresses the recipient account-wide. Requires one To recipient and no cc or bcc. Automatic on shared OpenMail domains for new single-recipient emails.",
         ),
       headers: z
         .record(z.string(), z.string())
@@ -902,7 +901,7 @@ export function createMcpServer(input: {
         ? `\nfrom: ${inbox.address || inbox.id} (default inbox — pass inbox_id to send from another)`
         : "";
       return text(
-        `Sent to ${args.to}${from}${sent.threadId ? `\nthread: ${sent.threadId}` : ""}`,
+        `Sent to ${recipientText(args.to as string | string[])}${from}${sent.threadId ? `\nthread: ${sent.threadId}` : ""}`,
       );
     },
   );
@@ -917,7 +916,8 @@ export function createMcpServer(input: {
     }),
     {
       thread_id: THREAD_ID,
-      body: z.string().describe("Plain-text reply. It goes to the latest inbound sender (or, with none, the last outbound recipient)."),
+      body: z.string().describe("Plain-text reply."),
+      to: recipientInput().optional().describe("Explicit To address or ordered list. Omit to reply to the latest inbound sender, or to the last outbound message’s To recipients for a follow-up."),
       cc: CC_SCHEMA,
       bcc: BCC_SCHEMA,
       inbox_id: z
@@ -931,9 +931,8 @@ export function createMcpServer(input: {
       const messages = [...(thread.data ?? [])].reverse();
       // A follow-up on a thread the agent started has no inbound yet: reply
       // to whoever the last outbound went to instead of failing.
-      const to =
-        messages.find((m) => m.direction === "inbound")?.fromAddr ??
-        messages.find((m) => m.direction === "outbound" && m.toAddr)?.toAddr;
+      const outgoing = messages.find(m => m.direction === "outbound" && messageTo(m));
+      const to = args.to ?? messages.find(m => m.direction === "inbound")?.fromAddr ?? (outgoing && messageTo(outgoing));
       if (!to) return text("There's no one to reply to in this thread yet. Start a new email instead.", true);
       await api.post(`/v1/inboxes/${thread.inboxId}/send`, {
         to,
@@ -941,7 +940,7 @@ export function createMcpServer(input: {
         threadId: args.thread_id,
         ...copies(args),
       });
-      return text(`Replied on thread ${args.thread_id}`);
+      return text(`Replied to ${recipientText(to as string | string[])} on thread ${args.thread_id}`);
     },
   );
 
@@ -1074,7 +1073,7 @@ export function createMcpServer(input: {
         total = page.total ?? total;
         scanned += rows.length;
         for (const m of rows) {
-          const hay = [m.subject, m.fromAddr, m.toAddr, m.bodyText].filter(Boolean).join("\n").toLowerCase();
+          const hay = [m.subject, m.fromAddr, recipientText(messageTo(m)), m.bodyText].filter(Boolean).join("\n").toLowerCase();
           if (words.every((w) => hay.includes(w))) hits.push(m);
           if (hits.length >= max) break;
         }
@@ -1087,7 +1086,7 @@ export function createMcpServer(input: {
   add(
     "forward_message",
     toolDesc({
-      purpose: "Forward one message to another address, as a new thread from the same inbox.",
+      purpose: "Forward one message as a new thread from the same inbox.",
       notFor: "Replying to the sender (use reply_to_thread). Not for forwarding all future mail (use update_inbox).",
       when: "Someone else needs to see a message you received.",
       triggers: "forward this email, send this to my colleague",
@@ -1099,7 +1098,7 @@ export function createMcpServer(input: {
         .string()
         .optional()
         .describe("The `message:` id from read_thread. Omit to forward the latest inbound message."),
-      to: z.string().email().describe("Address to forward the message to."),
+      to: recipientInput().describe("One primary recipient or an ordered list of addresses to forward to."),
       note: z.string().optional().describe("Text above the forwarded message."),
       cc: CC_SCHEMA,
       bcc: BCC_SCHEMA,
@@ -1121,13 +1120,14 @@ export function createMcpServer(input: {
       }
       const subject = thread.subject ?? "";
       const files = msg.attachments?.map((a) => a.filename) ?? [];
+      const originalTo = recipientText(messageTo(msg));
       const body = [
         ...(args.note ? [String(args.note), ""] : []),
         "---------- Forwarded message ----------",
         `From: ${msg.fromAddr}`,
         ...(msg.createdAt ? [`Date: ${formatTimestamp(msg.createdAt) || msg.createdAt}`] : []),
         `Subject: ${subject}`,
-        ...(msg.toAddr ? [`To: ${msg.toAddr}`] : []),
+        ...(originalTo ? [`To: ${originalTo}`] : []),
         "",
         msg.bodyText ?? "",
         ...(files.length ? ["", `[Attachments not included: ${files.join(", ")}]`] : []),
@@ -1139,7 +1139,7 @@ export function createMcpServer(input: {
         ...copies(args),
       })) as { threadId?: string };
       const note = files.length ? `\nAttachments were not forwarded: ${files.join(", ")}` : "";
-      return text(`Forwarded ${msg.id} to ${args.to}${sent.threadId ? `\nthread: ${sent.threadId}` : ""}${note}`);
+      return text(`Forwarded ${msg.id} to ${recipientText(args.to as string | string[])}${sent.threadId ? `\nthread: ${sent.threadId}` : ""}${note}`);
     },
   );
 
