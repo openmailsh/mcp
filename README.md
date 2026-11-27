@@ -96,7 +96,7 @@ pnpm dev
 
 When a change to `server.json` reaches `main`, GitHub Actions waits for the hosted server to report that version and publishes `sh.openmail/openmail`. To retry from `main`, run `gh workflow run publish-registry.yml --repo openmailsh/mcp --ref main`.
 
-Set the GitHub Actions secret `MCP_PRIVATE_KEY` to the 64-character hex Ed25519 private key matching the MCP TXT record on `openmail.sh`. The workflow accepts a repository secret or a secret scoped to the `mcp-registry` environment. See the [registry DNS authentication instructions](https://modelcontextprotocol.io/registry/authentication#dns-authentication).
+Set the GitHub Actions secret `MCP_PRIVATE_KEY` to the Ed25519 private key (unencrypted PEM or 64-character hex seed) matching the MCP TXT record on `openmail.sh`. The workflow accepts a repository secret or a secret scoped to the `mcp-registry` environment. See the [registry DNS authentication instructions](https://modelcontextprotocol.io/registry/authentication#dns-authentication).
 
 ## Contributing
 

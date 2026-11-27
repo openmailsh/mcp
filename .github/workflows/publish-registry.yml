@@ -65,12 +65,7 @@ jobs:
         if: steps.registry.outputs.publish == 'true'
         env:
           MCP_PRIVATE_KEY: ${{ secrets.MCP_PRIVATE_KEY }}
-        run: |
-          if [[ -z "$MCP_PRIVATE_KEY" ]]; then
-            echo "::error::Set the MCP_PRIVATE_KEY repository or mcp-registry environment secret."
-            exit 1
-          fi
-          "$RUNNER_TEMP/mcp-publisher" login dns --domain openmail.sh
+        run: node scripts/login-mcp-registry.mjs
 
       - name: Publish manifest
         if: steps.registry.outputs.publish == 'true'
