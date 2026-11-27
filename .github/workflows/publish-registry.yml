@@ -1,0 +1,72 @@
+name: Publish to MCP Registry
+
+on:
+  push:
+    branches: [main]
+    paths: [server.json]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-registry-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: mcp-registry
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Check published version
+        id: registry
+        run: |
+          version=$(jq -er 'select(.name == "sh.openmail/openmail") | .version | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' server.json)
+          url="https://registry.modelcontextprotocol.io/v0.1/servers/sh.openmail%2Fopenmail/versions/$version"
+          status=$(curl --silent --show-error --retry 3 -o "$RUNNER_TEMP/listing.json" -w '%{http_code}' "$url")
+          case "$status" in
+            200) jq -e --slurpfile local server.json '.server | {name,version,remotes} == ($local[0] | {name,version,remotes})' "$RUNNER_TEMP/listing.json" ;;
+            404) echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::Registry lookup returned HTTP $status"; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install and validate publisher
+        if: steps.registry.outputs.publish == 'true'
+        working-directory: ${{ runner.temp }}
+        run: |
+          archive=mcp-publisher_linux_amd64.tar.gz
+          curl -fsSL --retry 3 -O "https://github.com/modelcontextprotocol/registry/releases/download/v1.8.17/$archive"
+          echo "4fbfe8236becd291a7a37b3e2cd7d5a6171ecf25c62a47f4fe92ef9b92007f9b  $archive" | sha256sum --check
+          tar -xzf "$archive" mcp-publisher
+          ./mcp-publisher validate "$GITHUB_WORKSPACE/server.json"
+
+      - name: Wait for the hosted release
+        if: steps.registry.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.registry.outputs.version }}
+        run: |
+          for attempt in {1..30}; do
+            if curl -fsS --connect-timeout 5 --max-time 10 https://mcp.openmail.sh/health | jq -e --arg version "$VERSION" '.status == "ok" and .version == $version'; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Hosted MCP has not reported version $VERSION"
+          exit 1
+
+      - name: Authenticate openmail.sh
+        if: steps.registry.outputs.publish == 'true'
+        env:
+          MCP_PRIVATE_KEY: ${{ secrets.MCP_PRIVATE_KEY }}
+        run: node scripts/login-mcp-registry.mjs
+
+      - name: Publish manifest
+        if: steps.registry.outputs.publish == 'true'
+        run: '"$RUNNER_TEMP/mcp-publisher" publish'

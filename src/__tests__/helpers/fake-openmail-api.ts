@@ -58,6 +58,7 @@ export type FakeAttachment = {
 };
 
 export type FakeState = {
+  mailboxResponse?: { method: string; path: string; status: number; result: unknown };
   /** bearer token → who it is. Anything else is 401. */
   tokens: Record<string, MeResponse>;
   inboxes: FakeInbox[];
@@ -154,6 +155,11 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
     const me = token ? state.tokens[token] : undefined;
     if (!me) {
       return json(401, { error: "unauthorized", message: "Invalid API key" });
+    }
+
+    const fixture = state.mailboxResponse;
+    if (fixture && method === fixture.method && url.pathname + url.search === fixture.path) {
+      return json(fixture.status, fixture.result);
     }
 
     let m: RegExpMatchArray | null;
@@ -321,10 +327,19 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
       const direction = url.searchParams.get("direction");
       const limit = Number(url.searchParams.get("limit") ?? 50);
       const offset = Number(url.searchParams.get("offset") ?? 0);
+      const q = url.searchParams.get("q") ?? "";
+      if (q.length > 200) return json(400, { error: "validation_error", message: "querystring/q must NOT have more than 200 characters" });
+      const words = q.toLowerCase().split(/\s+/).filter(Boolean);
       const all = Object.values(state.threads)
         .filter((t) => t.inboxId === m![1] && !t.trashed)
         .flatMap((t) => t.messages.map((msg) => ({ ...msg, threadId: t.id, subject: t.subject })))
         .filter((msg) => !direction || msg.direction === direction)
+        .filter((msg) => {
+          // toRecipients stands in for the headerTo column the API searches.
+          const hay = [msg.subject, msg.fromAddr, msg.toAddr, msg.headerTo, ...(msg.toRecipients ?? []), msg.bodyText]
+            .filter(Boolean).join(" ").toLowerCase();
+          return words.every((w) => hay.includes(w));
+        })
         .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
       return json(200, { data: all.slice(offset, offset + limit), total: all.length });
     }
@@ -361,6 +376,8 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
 
     if ((m = path.match(/^\/v1\/inboxes\/([^/]+)\/send$/)) && method === "POST") {
       if (state.sendFailure) return json(state.sendFailure.status, state.sendFailure.body);
+      const scheduled = body as { sendAt?: string };
+      if (scheduled.sendAt) return json(202, { id: "scheduled-1", status: "scheduled", sendAt: scheduled.sendAt });
       const b = (body ?? {}) as { threadId?: string };
       return json(201, { id: `msg-sent-${++seq}`, threadId: b.threadId ?? `thread-new-${seq}` });
     }
