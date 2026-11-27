@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import request from "supertest";
+import manifest from "../../server.json";
+import pkg from "../../package.json";
 import { createApp } from "../index";
 
 describe("hosted MCP http", () => {
@@ -7,7 +9,8 @@ describe("hosted MCP http", () => {
     const app = createApp();
     const health = await request(app).get("/health");
     expect(health.status).toBe(200);
-    expect(health.body.status).toBe("ok");
+    expect(health.body).toEqual({ status: "ok", version: manifest.version });
+    expect(manifest.version).toBe(pkg.version);
 
     const install = await request(app).get("/");
     expect(install.status).toBe(200);

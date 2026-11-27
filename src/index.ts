@@ -2,7 +2,7 @@ import express from "express";
 import crypto from "node:crypto";
 import { rateLimit, ipKeyGenerator } from "express-rate-limit";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createMcpServer } from "./server.js";
+import { createMcpServer, SERVER_VERSION } from "./server.js";
 import { instrumentServer } from "./analytics.js";
 import { ApiError, createOpenMailApi, type MeResponse } from "./openmail.js";
 import { INSTALL_MARKDOWN } from "./format.js";
@@ -198,7 +198,7 @@ export function createApp(): express.Express {
   });
 
   app.get("/health", (_req, res) => {
-    res.json({ status: "ok" });
+    res.json({ status: "ok", version: SERVER_VERSION });
   });
 
   // OpenAI Apps domain verification. The token is public by design: OpenAI

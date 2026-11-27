@@ -92,6 +92,12 @@ pnpm test
 pnpm dev
 ```
 
+## Publishing to the MCP Registry
+
+When a change to `server.json` reaches `main`, GitHub Actions waits for the hosted server to report that version and publishes `sh.openmail/openmail`. To retry from `main`, run `gh workflow run publish-registry.yml --repo openmailsh/mcp --ref main`.
+
+Configure the `mcp-registry` GitHub environment for the `main` branch. Store the 64-character hex Ed25519 private key matching the MCP TXT record on `openmail.sh` as its `MCP_PRIVATE_KEY` environment secret. See the [registry DNS authentication instructions](https://modelcontextprotocol.io/registry/authentication#dns-authentication).
+
 ## Contributing
 
 Open an issue or PR. Run `pnpm typecheck && pnpm test` before pushing.
