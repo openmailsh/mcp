@@ -1,3 +1,5 @@
+import { messageTo, recipientText, type MessageRecipients } from "./recipients.js";
+
 function clip(text: string, max = 4000): string {
   const trimmed = text.trim();
   if (trimmed.length <= max) return trimmed;
@@ -14,6 +16,47 @@ export function formatInboxes(
       return `- ${row.address}${name}\n  id: ${row.id}`;
     })
     .join("\n");
+}
+
+export type MailFolder = {
+  id: number;
+  name: string;
+  role: "inbox" | "sent" | "drafts" | "trash" | "archive" | "junk" | null;
+};
+
+export function formatFolders(inboxId: string, folders: MailFolder[]): string {
+  if (!folders.length) return `No folders in inbox ${inboxId}.`;
+  return [
+    `Folders in inbox ${inboxId}:`,
+    ...folders.map(folder => `- ${folder.name} · folder_id: ${folder.id} · ${folder.role ? `role: ${folder.role}` : "custom folder"}`),
+  ].join("\n");
+}
+
+export type FolderItem = {
+  id: string;
+  kind: "message" | "draft";
+  subject: string | null;
+  threadId: string | null;
+  createdAt: string;
+  fromAddr: string;
+  toAddr: string | null;
+  toRecipients?: string[];
+};
+
+export function formatFolderMessages(inboxId: string, folderId: number, rows: FolderItem[], total: number, offset: number): string {
+  const location = `folder ${folderId} in inbox ${inboxId}`;
+  if (!rows.length) return `No items on this page of ${location}. Total: ${total}. Offset: ${offset}.`;
+  const nextOffset = offset + rows.length;
+  return [
+    `Items in ${location}: ${offset + 1}–${nextOffset} of ${total}`,
+    ...rows.map(row => {
+      const to = recipientText(row.toRecipients ?? row.toAddr);
+      const recipients = to ? ` · To: ${to}` : "";
+      const thread = row.threadId ? ` · thread: ${row.threadId}` : "";
+      return `- ${row.subject || "(no subject)"} · ${formatTimestamp(row.createdAt)}\n  From: ${row.fromAddr}${recipients}\n  ${row.kind}: ${row.id}${thread}`;
+    }),
+    ...(nextOffset < total ? [`More items: call list_folder_messages with offset ${nextOffset}.`] : []),
+  ].join("\n");
 }
 
 export function formatInbox(row: {
@@ -55,12 +98,11 @@ export function formatThreads(
 export function formatThread(thread: {
   threadId: string;
   subject?: string | null;
-  messages: Array<{
+  messages: Array<MessageRecipients & {
     id: string;
     direction: string;
     fromAddr?: string;
     from?: string;
-    toAddr?: string;
     createdAt?: string;
     bodyText?: string | null;
     bodyHtml?: string | null;
@@ -78,7 +120,8 @@ export function formatThread(thread: {
   for (const message of thread.messages) {
     const from = message.fromAddr || message.from || "unknown";
     const when = formatTimestamp(message.createdAt);
-    const to = message.direction === "outbound" && message.toAddr ? ` to ${message.toAddr}` : "";
+    const recipients = recipientText(messageTo(message));
+    const to = recipients ? ` to ${recipients}` : "";
     lines.push(`## ${message.direction} from ${from}${to}${when ? ` — ${when}` : ""}`);
     // Every message's id: forward_message, delete_message, and the
     // attachment tools all take it.
@@ -114,12 +157,11 @@ export function formatThread(thread: {
 }
 
 export function formatSearch(
-  hits: Array<{
+  hits: Array<MessageRecipients & {
     id: string;
     threadId: string;
     direction: string;
     fromAddr: string;
-    toAddr?: string;
     subject?: string | null;
     bodyText?: string | null;
     createdAt?: string;
@@ -136,7 +178,7 @@ export function formatSearch(
   return [
     coverage,
     ...hits.map((m) => {
-      const who = m.direction === "outbound" ? `to ${m.toAddr ?? "?"}` : `from ${m.fromAddr}`;
+      const who = m.direction === "outbound" ? `to ${recipientText(messageTo(m)) || "?"}` : `from ${m.fromAddr}`;
       const when = formatTimestamp(m.createdAt);
       const snippet = (m.bodyText ?? "").replace(/\s+/g, " ").trim().slice(0, 140);
       return [
@@ -418,6 +460,7 @@ export type Draft = {
   threadId?: string | null;
   attachments?: Array<{ filename: string; contentType: string; sizeBytes: number; contentId?: string; url?: string }>;
   to: string | null;
+  toRecipients?: string[];
   cc: string[];
   bcc: string[];
   subject: string;
@@ -434,7 +477,7 @@ export function formatDraft(draft: Draft): string {
     `sending inbox: ${draft.inboxId}`,
     ...(draft.threadId ? [`reply thread: ${draft.threadId}`] : []),
     ...(draft.sourceThreadId ? [`source thread: ${draft.sourceThreadId}`] : []),
-    `To: ${draft.to || "(no recipient)"}`,
+    `To: ${recipientText(draft.toRecipients ?? draft.to) || "(no recipient)"}`,
     ...(draft.cc.length ? [`CC: ${draft.cc.join(", ")}`] : []),
     ...(draft.bcc.length ? [`BCC: ${draft.bcc.join(", ")}`] : []),
     `Updated: ${formatTimestamp(draft.updatedAt)}`,
@@ -460,7 +503,7 @@ export function formatDrafts(rows: Draft[], total: number, inboxId: string | und
   const nextOffset = offset + rows.length;
   return [
     `Drafts${scope}: ${offset + 1}–${nextOffset} of ${total}`,
-    ...rows.map((draft) => `- ${draft.subject || "(no subject)"} → ${draft.to || "(no recipient)"}\n  draft: ${draft.id} · inbox: ${draft.inboxId}`),
+    ...rows.map((draft) => `- ${draft.subject || "(no subject)"} → ${recipientText(draft.toRecipients ?? draft.to) || "(no recipient)"}\n  draft: ${draft.id} · inbox: ${draft.inboxId}`),
     ...(nextOffset < total ? [`More drafts: call list_drafts with offset ${nextOffset}.`] : []),
   ].join("\n");
 }

@@ -24,6 +24,10 @@ Before you act on a thread, `read_thread` the whole of it. Replies written from 
 
 When `read_thread` lists attachments, pass the message's `message_id` and the file's `attachment_id` to `get_attachment` (the file) or `get_attachment_text` (extracted text). If an older message has no attachment ID, pass its `filename`. Use `get_attachment` to look at an image or hand a file on: images come back as image content, other files as an embedded resource. Files over 4 MB are refused — there is no signed download link — and `get_attachment_text` is the fallback for PDF, Office, and OCR text.
 
+## Browse folders
+
+For "show my folders" or "what is in Sent?", call `list_folders` for the intended inbox. Choose the returned folder ID by its role or full custom path, then call `list_folder_messages` with that `folder_id` and the same `inbox_id`. Follow the returned offset for more items. Use `get_draft` for a draft item and `read_thread` for a message with a thread ID.
+
 ## Drafts
 
 When asked to discard a draft, identify it with `get_draft` and call `delete_draft` with its ID and exact `updated_at`. This permanently deletes the draft and its files without sending. Optional `inbox_id` must match the owner. On `draft_changed`, review the current draft and verify it is still the one the user wants discarded; never automatically refresh the version and retry. On `draft_sending`, check the draft and sent mail; deletion cannot cancel an accepted or pending send. A missing draft may already have been deleted or sent, so do not claim this request deleted it. Read-only connections cannot delete. OAuth connections use the same `send` scope as draft creation, editing and sending. If missing, reconnect with **Send mail** enabled and refresh tools. Existing send grants already cover deletion.
@@ -38,11 +42,13 @@ When asked to revise a saved draft, read it with `get_draft`, then call `edit_dr
 
 To send an approved draft, use `send_draft` with its `draft_id` and exact reviewed `updated_at`. Omit `inbox_id` or pass the owning inbox as a check. Creation, editing, sending and deletion require a writable connection and OAuth `send` scope when using OAuth. Read-only connections can list and read. A successful send preserves attachments and reply threading and removes the draft. If the version is stale, review the current content with the user before retrying. A failed or pending send retains the draft. Never bypass the saved version by copying it into `send_email`.
 
+If the installed tool lacks `send_at`, ask the user to update before scheduling. To schedule the reviewed draft, pass the requested time in `send_at` with a timezone, 30 seconds to 30 days ahead. Once accepted, it leaves Drafts. Report the scheduled time and scheduled-send ID. Delivery happens later.
+
 ## Sending
 
 Replying to something you received: `reply_to_thread` with the `thread_id`, always. It keeps the headers intact so the recipient's mail client shows one conversation. Starting a conversation that does not exist yet: `send_email` with `to`, `subject`, `body`.
 
-For `send_email`, `reply_to_thread`, and `send_draft`, show the recipients (including Cc/Bcc), subject, full body, and any saved attachments and reply thread and obtain approval before sending, unless the user has already approved that exact content and recipients in this conversation. Preparing or reviewing a draft alone does not authorize sending. These tools are flagged destructive; do not rely on a client permission prompt to convey the message content. One To recipient per message; use `cc` or `bcc` for others.
+For `send_email`, `reply_to_thread`, and `send_draft`, show the recipients (including Cc/Bcc), subject, full body, and any saved attachments and reply thread and obtain approval before sending, unless the user has already approved that exact content and recipients in this conversation. Preparing or reviewing a draft alone does not authorize sending. These tools are flagged destructive; do not rely on a client permission prompt to convey the message content. Pass primary recipients in `to` as one address or an ordered array. Every To recipient sees the others. Use `cc` for visible copies and `bcc` for blind copies. Omit `to` on a reply to use the latest inbound sender or, on an outbound-only thread, the previous To recipients.
 
 Do not invent a From address. Mail leaves from the inbox you pass (or the only inbox you have); if the user wants a different sender, that is a different inbox or a custom domain.
 

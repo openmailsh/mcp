@@ -36,6 +36,12 @@ Keys and transcripts: over OAuth (Claude, Cursor sign-in) `setup_agent_email` an
 
 **stdio-only clients:** `npx -y mcp-remote https://mcp.openmail.sh/mcp`
 
+## Folders
+
+Call `list_folders` with an `inbox_id` to get the names and numeric IDs of its standard and custom folders, including empty folders. To browse Sent, for example, use the ID of the folder whose role is `sent`. Pass that `folder_id` and the same `inbox_id` to `list_folder_messages`. Both tools are available on read-only connections.
+
+Results are newest first. Use `limit` (1–100, default 50) and `offset` (default 0) to page through a folder. Drafts can contain both filed messages and editable drafts. Use the returned item kind and ID to distinguish them.
+
 ## Drafts
 
 `delete_draft` permanently discards an unsent draft and its attachments when the user requests it. Read the draft first and supply `draft_id` and its exact `updated_at`; optional `inbox_id` checks ownership. Deletion never sends mail or cancels a send. A stale version requires reviewing the current draft before another attempt; pending or accepted sends block deletion. Missing drafts return an error, including after a successful prior deletion. Never automatically substitute a newer version or retry deletion.
@@ -51,6 +57,8 @@ Use `create_draft` with the sending `inbox_id`. A connection locked to an inbox 
 Use `edit_draft` with `draft_id` and the exact `updated_at` from `get_draft`. Only supplied fields change, and editing never sends mail. `to: null` clears the recipient; `cc: []` and `bcc: []` clear copy recipients. Empty strings clear the subject or body. `body_html` replaces the HTML and the API regenerates plain text. Use `body_html: ""` to clear the body, or omit it to preserve the body. Regular attachments remain saved; retain `cid:` references for inline images you want to keep. Uploading attachments remains available through creation or the console. Editing cannot move a draft or change its reply context. If the version is stale, read the draft and reconcile the requested changes before another edit; never automatically overwrite newer edits. Edits are blocked while a send is pending or accepted.
 
 Read the saved draft with `get_draft` and its `draft_id`. Review the owning inbox, recipients, text and HTML, thread context, and any attachments before sending. On the user’s instruction, call `send_draft` with the ID and exact `updated_at` from that review. An optional `inbox_id` must match the owner. A successful send removes the draft. Changed versions require another review, and failed or pending attempts retain the draft. Read-only connections can list and read drafts. Creation, editing, sending and deletion require write access and the OAuth `send` scope when using OAuth.
+
+To schedule the reviewed draft, pass the requested time in `send_at` with a timezone, 30 seconds to 30 days ahead. Once accepted, it leaves Drafts. Report the scheduled time and scheduled-send ID. Delivery happens later.
 
 ## Plugin packages
 

@@ -22,6 +22,8 @@ export const ALL_TOOLS = [
   "send_mcp_feedback",
   "list_inboxes",
   "get_inbox",
+  "list_folders",
+  "list_folder_messages",
   "create_inbox",
   "mint_inbox_key",
   "send_email",
@@ -125,6 +127,7 @@ export function sessionToolAccess(ctx: SessionContext) {
 
   if (ctx.toolsets.has("mailbox")) {
     if (!inboxLocked) tools.push("list_inboxes");
+    tools.push("list_folders", "list_folder_messages");
     tools.push("get_inbox", "list_unread_threads", "read_thread", "get_attachment", "get_attachment_text", "search_mail", "list_drafts", "get_draft");
     // Marking read is a write (PATCH /v1/threads/:id); readonly sessions get none.
     if (!ctx.readonly) tools.push("mark_thread_read");

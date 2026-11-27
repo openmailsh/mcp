@@ -236,7 +236,7 @@ describe("tools/list", () => {
     expect(await toolNames(client)).toEqual(
       sorted([
         "search_docs", "get_docs", "auth_me", "send_mcp_feedback",
-        "get_inbox", "list_unread_threads", "read_thread", "get_attachment", "get_attachment_text", "search_mail",
+        "get_inbox", "list_folders", "list_folder_messages", "list_unread_threads", "read_thread", "get_attachment", "get_attachment_text", "search_mail",
         "list_drafts", "get_draft", "delete_draft", "create_draft", "edit_draft", "send_draft",
         "mark_thread_read", "send_email", "reply_to_thread", "forward_message",
       ]),
@@ -535,6 +535,72 @@ describe("inbox lock", () => {
 // Mailbox loop
 // ---------------------------------------------------------------------------
 
+describe("mail folders", () => {
+  beforeEach(() => {
+    api.state.folders = {
+      "inbox-a": [
+        { id: 12, name: "Finance/Receipts", role: null, items: [] },
+        { id: 26, name: "Drafts", role: "drafts", items: [
+          { id: "draft-a", kind: "draft", threadId: null, subject: null, fromAddr: "a@omail.sh",
+            toAddr: null, createdAt: "2026-09-12T10:00:00Z" },
+          { id: "message-a", kind: "message", threadId: "thread-a", subject: "Filed message", fromAddr: "sender@example.com",
+            toAddr: "a@omail.sh", toRecipients: ["a@omail.sh", "b@omail.sh"], createdAt: "2026-09-10T10:00:00Z" },
+        ] },
+      ],
+    };
+  });
+
+  it("discovers nested and empty folders and pages through mixed items on a read-only connection", async () => {
+    const client = await connect("/mcp/readonly", await oauthToken("read"));
+    const folders = await call(client, "list_folders");
+    expect(folders.isError).toBe(false);
+    expect(folders.text).toContain("Folders in inbox inbox-a");
+    expect(folders.text).toContain("Finance/Receipts · folder_id: 12 · custom folder");
+    expect(folders.text).toContain("Drafts · folder_id: 26 · role: drafts");
+
+    const page = { inbox_id: "inbox-a", folder_id: 26, limit: 1 };
+    const first = await call(client, "list_folder_messages", page);
+    expect(first.text).toContain("1–1 of 2");
+    expect(first.text).toContain("draft: draft-a");
+    expect(first.text).toContain("offset 1");
+    const second = await call(client, "list_folder_messages", { ...page, offset: 1 });
+    expect(second.text).toContain("message: message-a · thread: thread-a");
+    expect(second.text).toContain("To: a@omail.sh, b@omail.sh");
+    expect(second.text).not.toContain("More items");
+    const empty = await call(client, "list_folder_messages", { folder_id: 12 });
+    expect(empty.isError).toBe(false);
+    expect(empty.text).toContain("Total: 0");
+    expect(api.calls("GET", /^\/v1\/inboxes\/inbox-a\/folders\/12\/messages\?limit=50&offset=0$/)).toHaveLength(1);
+    expect(api.requests.every(request => request.method === "GET")).toBe(true);
+  });
+
+  it("honors a locked inbox and validates folder ids and page bounds before requesting a folder", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    expect((await call(client, "list_folders", { inbox_id: "inbox-b" })).isError).toBe(true);
+    expect((await call(client, "list_folder_messages", { inbox_id: "inbox-b", folder_id: 26 })).isError).toBe(true);
+    for (const args of [{ folder_id: 0 }, { folder_id: 2147483648 }, { folder_id: 26, limit: 101 }, { folder_id: 26, offset: -1 }]) {
+      expect((await call(client, "list_folder_messages", args)).isError).toBe(true);
+    }
+    expect(api.calls("GET", /\/folders/)).toHaveLength(0);
+    expect((await call(client, "list_folders")).text).toContain("inbox-a");
+    expect((await call(client, "list_folder_messages", { folder_id: 999 })).isError).toBe(true);
+    expect(api.calls("GET", /\/folders/).every(request => request.token === INBOX_A_KEY)).toBe(true);
+  });
+
+  it("omits a blind-copy envelope address from the visible recipients", async () => {
+    api.state.folders!["inbox-a"][0].items = [{
+      kind: "message", id: "blind-copy", subject: "Receipt", threadId: "thread-b",
+      fromAddr: "sender@example.com", toAddr: "blind@example.com", toRecipients: [],
+      createdAt: "2026-09-13T10:00:00Z",
+    }];
+    const client = await connect("/mcp/readonly", await oauthToken("read"));
+    const result = await call(client, "list_folder_messages", { folder_id: 12 });
+    expect(result.text).toContain("message: blind-copy");
+    expect(result.text).not.toContain("To:");
+    expect(result.text).not.toContain("blind@example.com");
+  });
+});
+
 describe("mailbox tools", () => {
   it("reply_to_thread posts to the thread's inbox with the inbound sender and threadId", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
@@ -572,6 +638,54 @@ describe("mailbox tools", () => {
     expect(sends[1].body).toEqual({
       to: "human@example.com", body: "r", threadId: "thread-a1", bcc: ["crm@example.com"],
     });
+  });
+
+  it("sends, replies and forwards to ordered primary recipients", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    const to = ["first@example.com", "second@example.com"];
+    const send = await call(client, "send_email", { subject: "Meet", body: "Hello", to });
+    const reply = await call(client, "reply_to_thread", { thread_id: "thread-a1", body: "Hello", to });
+    const forward = await call(client, "forward_message", { thread_id: "thread-a1", to });
+    for (const result of [send, reply, forward]) {
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain(to.join(", "));
+    }
+    const requests = api.calls("POST", /\/send$/);
+    expect(requests).toHaveLength(3);
+    for (const request of requests) expect(request.body).toMatchObject({ to });
+    expect(requests[1].body).toMatchObject({ threadId: "thread-a1" });
+
+    for (const invalid of [[], [...to, "invalid"], "first@example.com,invalid"]) {
+      expect((await call(client, "send_email", { subject: "Meet", body: "Hello", to: invalid })).isError).toBe(true);
+    }
+    expect(api.calls("POST", /\/send$/)).toHaveLength(3);
+  });
+
+  it("reads and searches all recipients and follows up to the complete previous To list", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    const to = ["first@example.com", "second@example.com"];
+    api.state.threads["thread-a1"].messages = [{
+      id: "out", direction: "outbound", fromAddr: "a@omail.sh", toAddr: to[0], toRecipients: to, bodyText: "Hello",
+    }];
+    expect((await call(client, "read_thread", { thread_id: "thread-a1" })).text).toContain(to.join(", "));
+    expect((await call(client, "search_mail", { query: "second@example.com" })).text).toContain(to.join(", "));
+    expect((await call(client, "reply_to_thread", { thread_id: "thread-a1", body: "Following up" })).isError).toBe(false);
+    expect(api.calls("POST", /\/send$/)[0].body).toMatchObject({ to });
+  });
+
+  it("omits the envelope address when forwarding a message with no visible To", async () => {
+    const client = await connect("/mcp", INBOX_A_KEY);
+    for (const visibility of [{ toRecipients: [] }, { headerTo: null, deliveryRole: "cc" }]) {
+      api.state.threads["thread-a1"].messages = [{
+        id: "hidden", direction: "inbound", fromAddr: "sender@example.com", toAddr: "private@example.com",
+        ...visibility, bodyText: "Hello",
+      }];
+      const result = await call(client, "forward_message", { thread_id: "thread-a1", to: "reader@example.com" });
+      expect(result.isError).toBe(false);
+    }
+    const sends = api.calls("POST", /\/send$/);
+    expect(sends).toHaveLength(2);
+    for (const request of sends) expect(request.body).toMatchObject({ body: expect.not.stringContaining("private@example.com") });
   });
 
   it("send_email forwards unsubscribe only when true", async () => {
@@ -1290,6 +1404,21 @@ describe("email drafts", () => {
     expect(api.calls("POST", /\/inboxes\/[^/]+\/send$/)).toHaveLength(0);
   });
 
+  it("schedules a reviewed draft with its exact version and reports its scheduled-send ID", async () => {
+    const client = await connect("/mcp", await oauthToken("read send"));
+    await call(client, "create_draft", { inbox_id: "inbox-a", to: "reader@example.com", subject: "Ready", body_html: "<p>Ready</p>" });
+    const draft = api.state.drafts![0];
+    const sendAt = new Date(Date.now() + 3600000).toISOString();
+    const args = { draft_id: draft.id, updated_at: draft.updatedAt, send_at: sendAt };
+    expect((await call(client, "send_draft", { ...args, send_at: "" })).isError).toBe(true);
+    expect(api.calls("POST", /\/drafts\/[^/]+\/send$/)).toHaveLength(0);
+    const result = await call(client, "send_draft", args);
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("Scheduled send: scheduled-1");
+    expect(result.text).toContain(sendAt);
+    expect(api.calls("POST", /\/drafts\/[^/]+\/send$/)[0]?.body).toEqual({ updatedAt: draft.updatedAt, sendAt });
+  });
+
   it("sends the reviewed saved version once and removes the draft", async () => {
     const client = await connect("/mcp", await oauthToken("read send"));
     await call(client, "create_draft", { inbox_id: "inbox-a", to: "reader@example.com", subject: "Ready", body_html: "<p>Approved body</p>" });
@@ -1478,15 +1607,16 @@ describe("email drafts", () => {
     expect((await call(client, "create_draft", { inbox_id: "inbox-b", source_thread_id: "thread-a1" })).isError).toBe(true);
   });
 
-  it("uploads regular files and referenced inline images as multipart with repeated recipients", async () => {
+  it("uploads files and complete To, Cc and Bcc lists in one multipart field each", async () => {
     const client = await connect("/mcp", INBOX_A_KEY);
     const cid = "inline-01234567-89ab-cdef-0123-456789abcdef@openmail";
     const html = `<p>See report</p><img src="cid:${cid}">`;
     const bytes = Buffer.from([0, 128, 255]);
     const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRXsAAAAASUVORK5CYII=";
+    const to = ["main@example.com", "second@example.com"];
     const cc = ["one@example.com", "two@example.com"];
     const saved = await call(client, "create_draft", {
-      thread_id: "thread-a1", body_html: html, cc, bcc: ["private@example.com"],
+      thread_id: "thread-a1", body_html: html, to, cc, bcc: ["private@example.com"],
       attachments: [{ filename: "report.bin", content_type: "application/octet-stream", content_base64: bytes.toString("base64") }],
       inline_images: [{ content_id: cid, content_type: "image/png", content_base64: png }],
     });
@@ -1499,8 +1629,16 @@ describe("email drafts", () => {
     expect(form.get("inboxId")).toBe("inbox-a");
     expect(form.get("bodyHtml")).toBe(html);
     expect(form.get("threadId")).toBe("thread-a1");
-    expect(form.getAll("cc")).toEqual(cc);
-    expect(form.getAll("bcc")).toEqual(["private@example.com"]);
+    expect(form.get("to")).toBe(JSON.stringify(to));
+    expect(form.get("cc")).toBe(JSON.stringify(cc));
+    expect(form.get("bcc")).toBe(JSON.stringify(["private@example.com"]));
+    expect(saved.text).toContain("To: " + to.join(", "));
+    const draft = api.state.drafts![0];
+    const replacement = [...to].reverse();
+    const edited = await call(client, "edit_draft", { draft_id: draft.id, updated_at: draft.updatedAt, to: replacement });
+    expect(edited.isError).toBe(false);
+    expect(edited.text).toContain("To: " + replacement.join(", "));
+    expect(api.calls("PATCH", /\/v1\/drafts\//)[0].body).toMatchObject({ to: replacement });
     const file = form.get("attachments") as File;
     expect(Buffer.from(await file.arrayBuffer())).toEqual(bytes);
     const image = form.get("inlineImages") as File;

@@ -77,6 +77,26 @@ export const redactMailContent: BeforeSendFn = (event) => {
   return event;
 };
 
+// Guessing a tool name is a client mistake (`-32602 Tool send_email not found`).
+// The tool-call event still records it. The `$exception` sibling is what opens
+// a new Slack issue for every name the agent tries.
+const UNKNOWN_TOOL = /MCP error -32602: Tool \S+ not found/;
+
+function isUnknownToolException(event: Parameters<BeforeSendFn>[0]): boolean {
+  if (event.event !== "$exception") return false;
+  const list = event.properties?.$exception_list;
+  if (!Array.isArray(list)) return false;
+  return list.some((item) => {
+    if (!item || typeof item !== "object" || !("value" in item)) return false;
+    return UNKNOWN_TOOL.test(String((item as { value?: unknown }).value ?? ""));
+  });
+}
+
+export const beforeSendAnalytics: BeforeSendFn = (event) => {
+  if (isUnknownToolException(event)) return null;
+  return redactMailContent(event);
+};
+
 function serverBuild(): string | undefined {
   // Railway sets RAILWAY_GIT_COMMIT_SHA on every deploy.
   const sha = process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_SHA;
@@ -117,7 +137,7 @@ export function instrumentServer(
       toolsets: [...ctx.toolsets].sort().join(","),
       ...(ctx.scopes ? { scopes: [...ctx.scopes].sort().join(" ") } : {}),
     }),
-    beforeSend: redactMailContent,
+    beforeSend: beforeSendAnalytics,
     // The SDK logs every captured event at this level; only useful when debugging.
     ...(process.env.MCP_ANALYTICS_DEBUG
       ? { logger: (message: string) => console.warn(`[mcp analytics] ${message}`) }
