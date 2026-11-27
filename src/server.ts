@@ -383,7 +383,7 @@ function serverInstructions(ctx: SessionContext, allowed: Set<ToolName>): string
   return instructions.join("\n");
 }
 
-export const SERVER_VERSION = "0.4.1";
+export const SERVER_VERSION = "0.4.2";
 
 export function createMcpServer(input: {
   ctx: SessionContext;
