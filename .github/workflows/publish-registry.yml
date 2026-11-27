@@ -67,7 +67,7 @@ jobs:
           MCP_PRIVATE_KEY: ${{ secrets.MCP_PRIVATE_KEY }}
         run: |
           if [[ -z "$MCP_PRIVATE_KEY" ]]; then
-            echo "::error::Set MCP_PRIVATE_KEY in the mcp-registry GitHub environment."
+            echo "::error::Set the MCP_PRIVATE_KEY repository or mcp-registry environment secret."
             exit 1
           fi
           "$RUNNER_TEMP/mcp-publisher" login dns --domain openmail.sh
