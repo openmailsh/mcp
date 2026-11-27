@@ -126,6 +126,7 @@ describe("visibleTools", () => {
         "get_inbox",
         "list_folders",
         "list_folder_messages",
+        "list_scheduled_sends",
         "list_drafts",
         "get_draft",
         "list_unread_threads",
@@ -138,7 +139,7 @@ describe("visibleTools", () => {
         "get_domain",
       ].sort(),
     );
-    expect(tools).toHaveLength(18);
+    expect(tools).toHaveLength(19);
   });
 });
 

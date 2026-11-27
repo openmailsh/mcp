@@ -26,6 +26,10 @@ When `read_thread` lists attachments, pass the message's `message_id` and the fi
 
 For "show my folders" or "what is in Sent?", call `list_folders` for the intended inbox. Choose the returned folder ID by its role or full custom path, then call `list_folder_messages` with that `folder_id` and the same `inbox_id`. Follow the returned offset for more items. Use `get_draft` for a draft item and `read_thread` for a message with a thread ID.
 
+Use `create_folder`, `rename_folder` and `delete_folder` for custom folders. Renaming or deleting a folder includes its descendants. Use `move_message` with a message ID and numeric destination folder ID in the same inbox. `restore_message` returns a trashed message to its previous folder or its default folder if the original was deleted. On OAuth connections, enable **Manage folders** to use these tools.
+
+To schedule a new message or reply, pass `send_at` to `send_email` or `reply_to_thread`. Supply a timestamp with a timezone, 30 seconds to 30 days ahead. Keep the returned scheduled-send ID. Use `list_scheduled_sends` to find queued mail, `reschedule_scheduled_send` to change its delivery time, or `cancel_scheduled_send` to stop it. Pass `statuses` as a list to include sent, sending, cancelled or failed sends.
+
 ## Drafts
 
 When asked to discard a draft, identify it with `get_draft` and call `delete_draft` with its ID and exact `updated_at`. This permanently deletes the draft and its files without sending. Optional `inbox_id` must match the owner. On `draft_changed`, review the current draft and verify it is still the one the user wants discarded; never automatically refresh the version and retry. On `draft_sending`, check the draft and sent mail; deletion cannot cancel an accepted or pending send. A missing draft may already have been deleted or sent, so do not claim this request deleted it. Read-only connections cannot delete. OAuth connections use the same `send` scope as draft creation, editing and sending. If missing, reconnect with **Send mail** enabled and refresh tools. Existing send grants already cover deletion.

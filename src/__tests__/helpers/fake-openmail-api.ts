@@ -58,6 +58,7 @@ export type FakeAttachment = {
 };
 
 export type FakeState = {
+  mailboxResponse?: { method: string; path: string; status: number; result: unknown };
   /** bearer token → who it is. Anything else is 401. */
   tokens: Record<string, MeResponse>;
   inboxes: FakeInbox[];
@@ -154,6 +155,11 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
     const me = token ? state.tokens[token] : undefined;
     if (!me) {
       return json(401, { error: "unauthorized", message: "Invalid API key" });
+    }
+
+    const fixture = state.mailboxResponse;
+    if (fixture && method === fixture.method && url.pathname + url.search === fixture.path) {
+      return json(fixture.status, fixture.result);
     }
 
     let m: RegExpMatchArray | null;
@@ -370,6 +376,8 @@ export async function startFakeOpenMailApi(initial: FakeState = emptyState()): P
 
     if ((m = path.match(/^\/v1\/inboxes\/([^/]+)\/send$/)) && method === "POST") {
       if (state.sendFailure) return json(state.sendFailure.status, state.sendFailure.body);
+      const scheduled = body as { sendAt?: string };
+      if (scheduled.sendAt) return json(202, { id: "scheduled-1", status: "scheduled", sendAt: scheduled.sendAt });
       const b = (body ?? {}) as { threadId?: string };
       return json(201, { id: `msg-sent-${++seq}`, threadId: b.threadId ?? `thread-new-${seq}` });
     }

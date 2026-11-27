@@ -48,6 +48,7 @@ export type OpenMailApi = {
   /** GET that returns the body bytes. `request()` is JSON-only and would drop a file. */
   getBinary: (path: string, maxBytes: number) => Promise<BinaryResponse>;
   post: (path: string, body?: unknown) => Promise<unknown>;
+  put: (path: string, body: unknown) => Promise<unknown>;
   patch: (path: string, body?: unknown) => Promise<unknown>;
   delete: (path: string, body?: unknown) => Promise<unknown>;
 };
@@ -100,6 +101,7 @@ export function createOpenMailApi(
   ): Promise<unknown> {
     const res = await send(method, path, body);
     if (!res.ok) throw await readError(res);
+    if (res.status === 204) return { ok: true };
     return (await res.json().catch(() => ({}))) as unknown;
   }
 
@@ -144,6 +146,7 @@ export function createOpenMailApi(
     get: (path) => request("GET", path),
     getBinary,
     post: (path, body) => request("POST", path, body ?? {}),
+    put: (path, body) => request("PUT", path, body),
     patch: (path, body) => request("PATCH", path, body ?? {}),
     delete: (path, body) => request("DELETE", path, body),
   };

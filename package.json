@@ -1,6 +1,6 @@
 {
   "name": "@openmail/mcp",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "Hosted MCP server for OpenMail — email inbox for AI agents",
   "license": "MIT",
   "type": "module",

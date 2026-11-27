@@ -40,6 +40,10 @@ Keys and transcripts: over OAuth (Claude, Cursor sign-in) `setup_agent_email` an
 
 Call `list_folders` with an `inbox_id` to get the names and numeric IDs of its standard and custom folders, including empty folders. To browse Sent, for example, use the ID of the folder whose role is `sent`. Pass that `folder_id` and the same `inbox_id` to `list_folder_messages`. Both tools are available on read-only connections.
 
+Use `create_folder`, `rename_folder` and `delete_folder` for custom folders. Renaming or deleting a folder includes its descendants. Use `move_message` with a message ID and numeric destination folder ID in the same inbox. `restore_message` returns a trashed message to its previous folder or its default folder if the original was deleted. On OAuth connections, enable **Manage folders** to use these tools.
+
+To schedule a new message or reply, pass `send_at` to `send_email` or `reply_to_thread`. Supply a timestamp with a timezone, 30 seconds to 30 days ahead. Keep the returned scheduled-send ID. Use `list_scheduled_sends` to find queued mail, `reschedule_scheduled_send` to change its delivery time, or `cancel_scheduled_send` to stop it. Pass `statuses` as a list to include sent, sending, cancelled or failed sends.
+
 Results are newest first. Use `limit` (1–100, default 50) and `offset` (default 0) to page through a folder. Drafts can contain both filed messages and editable drafts. Use the returned item kind and ID to distinguish them.
 
 ## Drafts
@@ -87,6 +91,12 @@ pnpm install
 pnpm test
 pnpm dev
 ```
+
+## Publishing to the MCP Registry
+
+When a change to `server.json` reaches `main`, GitHub Actions waits for the hosted server to report that version and publishes `sh.openmail/openmail`. To retry from `main`, run `gh workflow run publish-registry.yml --repo openmailsh/mcp --ref main`.
+
+Set the GitHub Actions secret `MCP_PRIVATE_KEY` to the 64-character hex Ed25519 private key matching the MCP TXT record on `openmail.sh`. The workflow accepts a repository secret or a secret scoped to the `mcp-registry` environment. See the [registry DNS authentication instructions](https://modelcontextprotocol.io/registry/authentication#dns-authentication).
 
 ## Contributing
 

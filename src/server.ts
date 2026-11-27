@@ -99,6 +99,7 @@ const INBOX_DOMAIN = z
   .string()
   .optional()
   .describe("omail.sh (default) or a verified custom domain from list_domains.");
+const sendAt = z.string().datetime({ offset: true }).describe("Delivery time with timezone, 30 seconds to 30 days ahead.");
 const INBOX_ID = z
   .string()
   .optional()
@@ -283,6 +284,14 @@ const TOOL_ANNOTATIONS: Record<ToolName, ToolAnnotations> = {
   auth_me: read("Who am I"),
   list_inboxes: read("List inboxes"),
   get_inbox: read("Show inbox"),
+  create_folder: hints("Create folder", false, false, false, false),
+  rename_folder: hints("Rename folder", false, true, true, false),
+  delete_folder: hints("Delete folder", false, true, true, false),
+  move_message: hints("Move message", false, true, true, false),
+  restore_message: hints("Restore message", false, true, true, false),
+  list_scheduled_sends: read("List scheduled sends"),
+  reschedule_scheduled_send: hints("Reschedule scheduled send", false, true, true, false),
+  cancel_scheduled_send: hints("Cancel scheduled send", false, true, true, false),
   list_folders: read("List mail folders"),
   list_folder_messages: read("Browse a mail folder"),
   list_drafts: read("List email drafts"),
@@ -374,6 +383,8 @@ function serverInstructions(ctx: SessionContext, allowed: Set<ToolName>): string
   return instructions.join("\n");
 }
 
+export const SERVER_VERSION = "0.4.0";
+
 export function createMcpServer(input: {
   ctx: SessionContext;
   api: OpenMailApi | null;
@@ -385,7 +396,7 @@ export function createMcpServer(input: {
     {
       name: "openmail",
       title: "OpenMail",
-      version: "0.1.0",
+      version: SERVER_VERSION,
       description:
         "OpenMail is an email inbox for AI agents. Read autoReplyable mail (people and other agents; not spam, bulk, or bounces) and reply in-thread. Do not invent From addresses. Hosted URL: https://mcp.openmail.sh/mcp (sign in required; docs only at /mcp/public)",
       websiteUrl: "https://openmail.sh",
@@ -669,6 +680,55 @@ export function createMcpServer(input: {
     },
   );
 
+  function inboxTool(
+    name: ToolName,
+    description: string,
+    schema: Record<string, z.ZodTypeAny>,
+    run: (client: OpenMailApi, base: string, args: Record<string, unknown>) => Promise<unknown>,
+  ) {
+    add(name, description, { inbox_id: INBOX_ID, ...schema }, async (args) => {
+      if (!api) return signIn();
+      const id = await resolveInboxId(ctx, api, args.inbox_id as string | undefined);
+      const result = await run(api, `/v1/inboxes/${encodeURIComponent(id)}`, args);
+      return text(JSON.stringify(result));
+    });
+  }
+
+  const folderId = z.number().int().min(1).max(2147483647).describe("Numeric folder ID from list_folders in this inbox.");
+  const folderName = z.string().trim().min(1).max(255).describe("Full folder path, for example Finance/Invoices.");
+  const resourceId = z.string().min(1).refine(id => id !== "." && id !== "..", "Expected a resource ID");
+  inboxTool("create_folder", "Create a custom folder, including any missing parent folders.",
+    { name: folderName },
+    (client, base, args) => client.post(`${base}/folders`, { name: args.name }));
+
+  inboxTool("rename_folder", "Rename a custom folder and its descendants, preserving filed messages.",
+    { folder_id: folderId, name: folderName },
+    (client, base, args) => client.patch(`${base}/folders/${args.folder_id}`, { name: args.name }));
+
+  inboxTool("delete_folder", "Delete a custom folder and its descendants. Filed messages return to Inbox or Sent and trashed messages stay in Trash.",
+    { folder_id: folderId },
+    (client, base, args) => client.delete(`${base}/folders/${args.folder_id}`));
+
+  inboxTool("move_message", "Move a message to a folder in the same inbox. Moving into or out of Trash requires a pod or account key, or folder management consent.",
+    { message_id: resourceId.describe("ID of the message in this inbox."), folder_id: folderId },
+    (client, base, args) => client.put(`${base}/messages/${encodeURIComponent(String(args.message_id))}/folder`, { folderId: args.folder_id }));
+
+  inboxTool("restore_message", "Restore one message from Trash to its previous filing folder, or its default folder if the previous folder was deleted.",
+    { message_id: resourceId.describe("ID of the message in this inbox.") },
+    (client, base, args) => client.post(`${base}/messages/${encodeURIComponent(String(args.message_id))}/restore`));
+
+  inboxTool("list_scheduled_sends", "List up to 50 scheduled sends in one inbox, soonest first. Defaults to scheduled.",
+    { statuses: z.array(z.enum(["scheduled", "sending", "sent", "cancelled", "failed"])).nonempty().optional().describe("Statuses to include. Defaults to scheduled.") },
+    (client, base, args) => client.get(`${base}/scheduled-sends${args.statuses ? "?status=" + (args.statuses as string[]).join(",") : ""}`));
+
+  inboxTool("reschedule_scheduled_send", "Change the delivery time of a queued email. Use the scheduled-send ID returned at scheduling.",
+    { send_id: resourceId.describe("ID from a scheduled-send receipt or list_scheduled_sends."), send_at: sendAt },
+    (client, base, args) => client.patch(`${base}/scheduled-sends/${encodeURIComponent(String(args.send_id))}`, { sendAt: args.send_at }));
+
+  inboxTool("cancel_scheduled_send", "Cancel a queued email or dismiss a failed send in this inbox.",
+    { send_id: resourceId.describe("ID from a scheduled-send receipt or list_scheduled_sends.") },
+    (client, base, args) => client.delete(`${base}/scheduled-sends/${encodeURIComponent(String(args.send_id))}`));
+
   add(
     "create_inbox",
     toolDesc({
@@ -884,7 +944,7 @@ export function createMcpServer(input: {
     {
       inbox_id: z.string().min(1).optional().describe("Optional check that the saved draft belongs to this inbox. A draft always sends from its owning inbox."),
       draft_id: z.string().min(1).describe("Saved draft id from get_draft."),
-      send_at: z.string().datetime({ offset: true }).optional().describe("Requested delivery time, 30 seconds to 30 days ahead. Omit to send now."),
+      send_at: sendAt.optional().describe("Delivery time with timezone, 30 seconds to 30 days ahead. Omit to send now."),
       updated_at: z.string().datetime({ offset: true }).describe("Exact updated_at from get_draft. Read and review the draft before sending; do not substitute a newly fetched version without review."),
     },
     async (args) => {
@@ -922,6 +982,7 @@ export function createMcpServer(input: {
       to: recipientInput().describe("One visible primary recipient or an ordered list of To addresses."),
       subject: z.string().describe("Subject line of the new thread."),
       body: z.string().describe("Plain-text message body."),
+      send_at: sendAt.optional().describe("Delivery time with timezone, 30 seconds to 30 days ahead. Omit to send now."),
       cc: CC_SCHEMA,
       bcc: BCC_SCHEMA,
       unsubscribe: z
@@ -948,10 +1009,12 @@ export function createMcpServer(input: {
         to: args.to,
         subject: args.subject,
         body: args.body,
+        ...(args.send_at ? { sendAt: args.send_at } : {}),
         ...copies(args),
         ...(args.unsubscribe ? { unsubscribe: true } : {}),
         ...(args.headers && Object.keys(args.headers).length ? { headers: args.headers } : {}),
-      })) as { id?: string; threadId?: string; from?: string };
+      })) as { id?: string; threadId?: string; from?: string; sendAt?: string };
+      if (sent.sendAt) return text(`Scheduled send: ${sent.id}\ntime: ${sent.sendAt}`);
       // Say which address the mail left from when we chose it: the agent
       // (and the person reading the transcript) should never have to guess.
       const from = inbox.defaulted
@@ -975,6 +1038,7 @@ export function createMcpServer(input: {
       thread_id: THREAD_ID,
       body: z.string().describe("Plain-text reply."),
       to: recipientInput().optional().describe("Explicit To address or ordered list. Omit to reply to the latest inbound sender, or to the last outbound message’s To recipients for a follow-up."),
+      send_at: sendAt.optional().describe("Delivery time with timezone, 30 seconds to 30 days ahead. Omit to send now."),
       cc: CC_SCHEMA,
       bcc: BCC_SCHEMA,
       inbox_id: z
@@ -991,12 +1055,14 @@ export function createMcpServer(input: {
       const outgoing = messages.find(m => m.direction === "outbound" && messageTo(m));
       const to = args.to ?? messages.find(m => m.direction === "inbound")?.fromAddr ?? (outgoing && messageTo(outgoing));
       if (!to) return text("There's no one to reply to in this thread yet. Start a new email instead.", true);
-      await api.post(`/v1/inboxes/${thread.inboxId}/send`, {
+      const sent = await api.post(`/v1/inboxes/${thread.inboxId}/send`, {
         to,
         body: args.body,
         threadId: args.thread_id,
+        ...(args.send_at ? { sendAt: args.send_at } : {}),
         ...copies(args),
-      });
+      }) as { id?: string; sendAt?: string };
+      if (sent.sendAt) return text(`Scheduled reply: ${sent.id}\ntime: ${sent.sendAt}\nthread: ${args.thread_id}`);
       return text(`Replied to ${recipientText(to as string | string[])} on thread ${args.thread_id}`);
     },
   );
