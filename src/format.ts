@@ -166,17 +166,18 @@ export function formatSearch(
     bodyText?: string | null;
     createdAt?: string;
   }>,
-  info: { query: string; scanned: number; total: number; inbox?: { id: string; address?: string | null } },
+  info: { query: string; offset: number; total: number; inbox?: { id: string; address?: string | null } },
 ): string {
   const scope = info.inbox ? ` in ${info.inbox.address || info.inbox.id}` : "";
-  // Say how far back we looked, so "no results" is not read as "never existed".
-  const coverage =
-    info.total > info.scanned
-      ? `Searched the newest ${info.scanned} of ${info.total} messages${scope}.`
-      : `Searched all ${info.scanned} messages${scope}.`;
-  if (hits.length === 0) return `No messages match "${info.query}". ${coverage}`;
+  if (hits.length === 0) {
+    return info.total > 0
+      ? `No more messages match "${info.query}"${scope}: all ${info.total} matches come before offset ${info.offset}.`
+      : `No messages match "${info.query}"${scope}.`;
+  }
+  const shown = `${info.offset + 1}–${info.offset + hits.length}`;
+  const next = info.offset + hits.length < info.total ? ` Pass offset ${info.offset + hits.length} for more.` : "";
   return [
-    coverage,
+    `${info.total} ${info.total === 1 ? "message matches" : "messages match"} "${info.query}"${scope}; showing ${shown}, newest first.${next}`,
     ...hits.map((m) => {
       const who = m.direction === "outbound" ? `to ${recipientText(messageTo(m)) || "?"}` : `from ${m.fromAddr}`;
       const when = formatTimestamp(m.createdAt);

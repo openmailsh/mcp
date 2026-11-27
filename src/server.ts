@@ -63,9 +63,9 @@ function copies(args: { cc?: unknown; bcc?: unknown }): { cc?: string[]; bcc?: s
 
 /** Each unread thread costs one extra API read, so the page stays small. */
 const UNREAD_MAX = 20;
-/** No search endpoint yet: scan this many newest messages (100 per request). */
-const SEARCH_SCAN = 500;
 const SEARCH_MAX = 25;
+/** The API rejects longer `q` values. */
+const SEARCH_QUERY_MAX = 200;
 
 type SearchHit = MessageRecipients & {
   id: string;
@@ -1163,46 +1163,39 @@ export function createMcpServer(input: {
   add(
     "search_mail",
     toolDesc({
-      purpose: `Find messages by words in the subject, body, sender, or recipient. Scans the newest ${SEARCH_SCAN} messages of one inbox.`,
+      purpose: "Find messages in one inbox by words in the subject, body, sender, or To address. Searches the whole inbox, newest first.",
       notFor: "Searching the docs (use search_docs).",
       when: "You need an older thread or message and do not have its id.",
       triggers: "find the email from, search my mail, where is the invoice",
-      returns: "How many messages were scanned, then each match: subject, sender or recipient, time, thread id, message id, and a short body snippet.",
+      returns: "How many messages match, then each match: subject, sender or recipient, time, thread id, message id, and a short body snippet. Says which offset shows the next page.",
     }),
     {
-      query: z.string().describe("Words to look for in the subject, body, sender, or recipient. A message matches only if it contains every word; case is ignored."),
+      query: z.string().max(SEARCH_QUERY_MAX).describe("Words to look for in the subject, body, sender, or To address. A message matches only if it contains every word; case is ignored."),
       inbox_id: INBOX_ID,
       direction: z.enum(["inbound", "outbound"]).optional().describe("Restrict results to mail this inbox received (inbound) or sent (outbound). Omit to search both."),
       limit: z.number().int().optional().describe(`How many matching messages to return. Values above ${SEARCH_MAX} are treated as ${SEARCH_MAX}. Omit for 10.`),
+      offset: z.number().int().min(0).optional().describe("Number of matches to skip, for the next page. Omit for 0."),
     },
     async (args) => {
       if (!api) return signIn();
-      const words = String(args.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-      if (words.length === 0) return text("Enter some words to search for, e.g. `invoice acme`.", true);
+      const query = String(args.query ?? "").trim();
+      if (!query) return text("Enter some words to search for, e.g. `invoice acme`.", true);
       const inbox = await resolveInbox(ctx, api, args.inbox_id as string | undefined);
-      const max = Math.min(SEARCH_MAX, Math.max(1, Number(args.limit ?? 10) || 10));
-      const hits: SearchHit[] = [];
-      let scanned = 0;
-      let total = 0;
-      // The API has no search endpoint yet; page newest-first and stop early.
-      for (let offset = 0; offset < SEARCH_SCAN && hits.length < max; offset += 100) {
-        const params = new URLSearchParams({ limit: "100", offset: String(offset) });
-        if (args.direction) params.set("direction", String(args.direction));
-        const page = (await api.get(`/v1/inboxes/${inbox.id}/messages?${params}`)) as {
-          data?: SearchHit[];
-          total?: number;
-        };
-        const rows = page.data ?? [];
-        total = page.total ?? total;
-        scanned += rows.length;
-        for (const m of rows) {
-          const hay = [m.subject, m.fromAddr, recipientText(messageTo(m)), m.bodyText].filter(Boolean).join("\n").toLowerCase();
-          if (words.every((w) => hay.includes(w))) hits.push(m);
-          if (hits.length >= max) break;
-        }
-        if (rows.length < 100) break;
-      }
-      return text(formatSearch(hits, { query: String(args.query), scanned, total, inbox: inbox.defaulted ? inbox : undefined }));
+      const limit = Math.min(SEARCH_MAX, Math.max(1, Number(args.limit ?? 10) || 10));
+      const offset = Math.max(0, Number(args.offset ?? 0) || 0);
+      const params = new URLSearchParams({ q: query, limit: String(limit), offset: String(offset) });
+      if (args.direction) params.set("direction", String(args.direction));
+      const page = (await api.get(`/v1/inboxes/${inbox.id}/messages?${params}`)) as {
+        data?: SearchHit[];
+        total?: number;
+      };
+      const hits = page.data ?? [];
+      return text(formatSearch(hits, {
+        query,
+        offset,
+        total: page.total ?? offset + hits.length,
+        inbox: inbox.defaulted ? inbox : undefined,
+      }));
     },
   );
 

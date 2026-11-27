@@ -1195,14 +1195,35 @@ describe("draft deletion", () => {
 });
 
 describe("search, forward, and delete", () => {
-  it("search_mail matches every word across subject, sender, and body, and says how far it looked", async () => {
+  it("search_mail asks the API for messages holding every word and reports the match count", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
-    const hit = await call(client, "search_mail", { query: "invoice human", inbox_id: "inbox-a" });
+    const hit = await call(client, "search_mail", { query: " invoice human ", inbox_id: "inbox-a", direction: "inbound" });
     expect(hit.isError).toBe(false);
     expect(hit.text).toContain("thread: thread-a1 · message: msg-a1");
-    expect(hit.text).toContain("Searched all 2 messages");
+    expect(hit.text).toMatch(/^1 message matches "invoice human"; showing 1–1, newest first\.$/m);
+    expect(api.calls("GET", /\/v1\/inboxes\/inbox-a\/messages/).map((c) => c.path)).toEqual([
+      "/v1/inboxes/inbox-a/messages?q=invoice+human&limit=10&offset=0&direction=inbound",
+    ]);
     const miss = await call(client, "search_mail", { query: "invoice deals", inbox_id: "inbox-a" });
-    expect(miss.text).toMatch(/^No messages match/);
+    expect(miss.text).toBe('No messages match "invoice deals".');
+  });
+
+  it("search_mail pages through matches with offset", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const all = await call(client, "search_mail", { query: "example", inbox_id: "inbox-a" });
+    const total = Number(/^(\d+) messages? match/.exec(all.text)?.[1]);
+    expect(total).toBeGreaterThan(1);
+    const first = await call(client, "search_mail", { query: "example", inbox_id: "inbox-a", limit: 1 });
+    expect(first.text).toContain(`showing 1–1, newest first. Pass offset 1 for more.`);
+    const past = await call(client, "search_mail", { query: "example", inbox_id: "inbox-a", offset: total });
+    expect(past.text).toBe(`No more messages match "example": all ${total} matches come before offset ${total}.`);
+  });
+
+  it("search_mail rejects a query the API would refuse", async () => {
+    const client = await connect("/mcp", ACCOUNT_KEY);
+    const result = await call(client, "search_mail", { query: "a".repeat(201), inbox_id: "inbox-a" });
+    expect(result.isError).toBe(true);
+    expect(api.calls("GET", /\/v1\/inboxes\/inbox-a\/messages/)).toHaveLength(0);
   });
 
   it("search_mail on an inbox-scoped key cannot reach another inbox", async () => {
