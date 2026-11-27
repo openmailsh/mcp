@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CallToolRequestSchema, type CallToolResult, type ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { SessionContext, ToolName } from "./session.js";
-import { assertLockedInbox, lockedInboxId, setupToolUnavailableReason, visibleTools } from "./session.js";
+import { assertLockedInbox, lockedInboxId, sessionToolAccess, setupToolUnavailableReason } from "./session.js";
 import { draftFields, draftPayload, editDraftFields, editDraftPayload, type DraftInput, type EditDraftInput } from "./draft.js";
 import { recipientInput, messageTo, recipientText, type MessageRecipients } from "./recipients.js";
 import { getDocs, searchDocs } from "./docs.js";
@@ -335,7 +335,7 @@ function serverInstructions(ctx: SessionContext, allowed: Set<ToolName>): string
     "Never invent From addresses or paste API keys into chat.",
   ];
   if (allowed.has("auth_me")) {
-    instructions.push("Start with auth_me to see which credential and inbox you have.");
+    instructions.push("Use auth_me to identify the current organization, plan and inbox access for this credential.");
   }
   if (allowed.has("setup_agent_email")) {
     instructions.push("No inbox yet: setup_agent_email (plan first, then execute=true).");
@@ -383,7 +383,7 @@ function serverInstructions(ctx: SessionContext, allowed: Set<ToolName>): string
   return instructions.join("\n");
 }
 
-export const SERVER_VERSION = "0.4.0";
+export const SERVER_VERSION = "0.4.1";
 
 export function createMcpServer(input: {
   ctx: SessionContext;
@@ -391,7 +391,8 @@ export function createMcpServer(input: {
   me: MeResponse | null;
 }): McpServer {
   const { ctx, api, me } = input;
-  const allowed = new Set(visibleTools(ctx));
+  const { tools, missingConsent } = sessionToolAccess(ctx);
+  const allowed = new Set(tools);
   const server = new McpServer(
     {
       name: "openmail",
@@ -406,7 +407,7 @@ export function createMcpServer(input: {
   );
 
   // The SDK installs tools/call on the first registration. Wrap that callback
-  // through its public setter so hidden setup tools get an actionable error,
+  // through its public setter so calls missing consent get an actionable error,
   // while normal dispatch, validation, and later analytics instrumentation stay
   // with the SDK. Do not register denied tools or access its private registry.
   const setRequestHandler = server.server.setRequestHandler;
@@ -414,11 +415,18 @@ export function createMcpServer(input: {
     setRequestHandler.call(server.server, schema, async (request, extra) => {
       const parsed = CallToolRequestSchema.safeParse(request);
       if (parsed.success) {
-        const reason = setupToolUnavailableReason(ctx, parsed.data.params.name);
+        const { name, arguments: args } = parsed.data.params;
+        const reason = setupToolUnavailableReason(ctx, name);
         if (reason) return text(reason, true);
+        const permission = missingConsent.get(name);
+        if (permission) {
+          return text(
+            `This connection lacks permission for this operation. If the user needs it, ask them to reconnect OpenMail and enable "${permission}", then refresh the available tools.`,
+            true,
+          );
+        }
         // Check before SDK validation strips fields absent from the tool schema.
-        if (["create_draft", "edit_draft"].includes(parsed.data.params.name)) {
-          const args = parsed.data.params.arguments;
+        if ((name === "create_draft" || name === "edit_draft") && allowed.has(name)) {
           if (args && ["body", "body_text", "bodyText"].some(field => field in args)) {
             return text("Drafts accept body_html only. OpenMail generates the plain-text fallback automatically.", true);
           }
@@ -486,10 +494,10 @@ export function createMcpServer(input: {
   add(
     "auth_me",
     toolDesc({
-      purpose: "Who this credential is, and which inbox it can see.",
+      purpose: "Identify the current OpenMail organization and the access granted to this credential.",
       notFor: "Listing other customers or switching orgs.",
       when: "First authenticated call, or after a 403.",
-      triggers: "who am I, what can I access",
+      triggers: "who am I, which organization am I connected to, what can I access",
       returns: "Customer id, plan, API key scope, OAuth scopes (if any), and the locked inbox id when the credential is limited to one inbox.",
     }),
     {},

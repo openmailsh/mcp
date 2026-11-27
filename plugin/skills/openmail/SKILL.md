@@ -10,7 +10,9 @@ OpenMail gives this agent its own inbox. The MCP connector is already signed in;
 
 ## First call
 
-Run `auth_me` once per conversation. It tells you which organisation you are in and whether you can see one inbox or all of them. If `list_inboxes` is empty, call `setup_agent_email` with `execute: true`; the new address is live immediately.
+Use the tools returned by `tools/list` for this connection. When available, run `auth_me` once per conversation to see the current organisation ID, credential scope and any locked inbox ID.
+
+Use the locked inbox if one is shown. Otherwise, call `list_inboxes` if available. If it returns no inboxes and `setup_agent_email` is available, use that tool to preview the plan, then pass `execute: true` to create the inbox.
 
 If several inboxes are available, pass `inbox_id` on inbox-specific mail operations. Ask the user if the intended inbox is unclear.
 

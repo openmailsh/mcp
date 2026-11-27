@@ -260,7 +260,7 @@ describe("tools/list", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Setup permission guidance and stale tool calls
+// Permission guidance and stale tool calls
 // ---------------------------------------------------------------------------
 
 describe("setup permission guidance", () => {
@@ -330,12 +330,53 @@ describe("setup permission guidance", () => {
     }
     expect(api.requests).toHaveLength(0);
   });
+});
 
-  it("preserves the SDK error for unknown tool names", async () => {
+describe("stale mail and domain tool calls", () => {
+  const writes = [
+    { name: "send_email", args: { inbox_id: "inbox-a", to: "human@example.com", subject: "Hello", body: "Hi" }, consent: "Send mail" },
+    { name: "create_draft", args: { inbox_id: "inbox-a", body: "Legacy body" }, consent: "Send mail" },
+    { name: "send_draft", args: { draft_id: "draft-1", updated_at: "2026-09-10T10:00:00Z" }, consent: "Send mail" },
+    { name: "add_domain", args: { domain: "mail.example.com" }, consent: "Domains" },
+  ];
+
+  it("explains missing OAuth consent before validating arguments or contacting write APIs", async () => {
+    const client = await connect("/mcp", await oauthToken("read setup"));
+    const names = await toolNames(client);
+    for (const { name, args, consent } of writes) {
+      expect(names).not.toContain(name);
+      const result = await call(client, name, args);
+      expect(result.isError, name).toBe(true);
+      expect(result.text, name).toContain(consent);
+      expect(result.text, name).toMatch(/reconnect/i);
+      expect(result.text, name).toMatch(/refresh.*tool/i);
+      expect(result.text, name).not.toContain("body_html");
+    }
+    expect(api.requests.every(({ method, path }) => method === "GET" && path === "/v1/me")).toBe(true);
+  });
+
+  it.each(["/mcp/public", "/mcp/readonly", "/mcp?toolsets=docs"])(
+    "does not suggest broader OAuth consent for tools unavailable on %s",
+    async (path) => {
+      const client = await connect(path, path === "/mcp/public" ? undefined : await oauthToken("read setup"));
+      const names = await toolNames(client);
+      for (const { name, args } of writes) {
+        expect(names).not.toContain(name);
+        const result = await call(client, name, args);
+        expect(result.isError, name).toBe(true);
+        expect(result.text, name).not.toMatch(/enable ["“]?(Send mail|Domains)|missing (the )?(send|domains) permission/i);
+        expect(result.text, name).not.toContain("body_html");
+      }
+      expect(api.requests.every(({ method, path }) => method === "GET" && path === "/v1/me")).toBe(true);
+    },
+  );
+
+  it("preserves the SDK error for the unsupported get_org tool", async () => {
     const client = await connect("/mcp", await oauthToken("domains read send"));
-    const result = await call(client, "missing_tool");
+    expect(await toolNames(client)).not.toContain("get_org");
+    const result = await call(client, "get_org");
     expect(result.isError).toBe(true);
-    expect(result.text).toContain("MCP error -32602: Tool missing_tool not found");
+    expect(result.text).toContain("MCP error -32602: Tool get_org not found");
   });
 });
 
