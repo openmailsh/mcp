@@ -176,7 +176,8 @@ async function oauthToken(scope: string) {
 const sorted = (names: readonly string[]) => [...names].sort();
 const without = (names: readonly string[], ...drop: string[]) => sorted(names.filter((n) => !drop.includes(n)));
 
-const WRITE_TOOLS = ["setup_agent_email", "delete_draft", "create_draft", "edit_draft", "send_draft", "send_email", "reply_to_thread", "forward_message", "mark_thread_read", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain", "update_inbox", "delete_thread", "delete_message"];
+const MAILBOX_WRITES = ["create_folder", "rename_folder", "delete_folder", "move_message", "restore_message", "reschedule_scheduled_send", "cancel_scheduled_send"];
+const WRITE_TOOLS = [...MAILBOX_WRITES, "setup_agent_email", "delete_draft", "create_draft", "edit_draft", "send_draft", "send_email", "reply_to_thread", "forward_message", "mark_thread_read", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain", "update_inbox", "delete_thread", "delete_message"];
 /** The API refuses these to every OAuth token, so OAuth sessions never list them. */
 const API_KEY_ONLY = ["update_inbox", "delete_thread", "delete_message"];
 
@@ -236,6 +237,8 @@ describe("tools/list", () => {
     expect(await toolNames(client)).toEqual(
       sorted([
         "search_docs", "get_docs", "auth_me", "send_mcp_feedback",
+        "create_folder", "rename_folder", "delete_folder", "move_message",
+        "list_scheduled_sends", "reschedule_scheduled_send", "cancel_scheduled_send",
         "get_inbox", "list_folders", "list_folder_messages", "list_unread_threads", "read_thread", "get_attachment", "get_attachment_text", "search_mail",
         "list_drafts", "get_draft", "delete_draft", "create_draft", "edit_draft", "send_draft",
         "mark_thread_read", "send_email", "reply_to_thread", "forward_message",
@@ -246,12 +249,12 @@ describe("tools/list", () => {
   it("a read-only OAuth token keeps mark_thread_read but loses send, setup, and domain writes", async () => {
     const client = await connect("/mcp", await oauthToken("read"));
     expect(await toolNames(client)).toEqual(
-      without(ALL_TOOLS, "setup_agent_email", "delete_draft", "create_draft", "edit_draft", "send_draft", "send_email", "reply_to_thread", "forward_message", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain", ...API_KEY_ONLY),
+      without(ALL_TOOLS, ...MAILBOX_WRITES, "setup_agent_email", "delete_draft", "create_draft", "edit_draft", "send_draft", "send_email", "reply_to_thread", "forward_message", "create_inbox", "mint_inbox_key", "add_domain", "verify_domain", ...API_KEY_ONLY),
     );
   });
 
   it("an OAuth token with every scope matches the account-wide key, minus API-key-only tools", async () => {
-    const client = await connect("/mcp", await oauthToken("read setup send domains"));
+    const client = await connect("/mcp", await oauthToken("read setup send domains folders"));
     expect(await toolNames(client)).toEqual(without(ALL_TOOLS, ...API_KEY_ONLY));
   });
 });
@@ -290,7 +293,7 @@ describe("setup permission guidance", () => {
   });
 
   it("keeps the plan-then-execute guidance when setup permission is granted", async () => {
-    const client = await connect("/mcp", await oauthToken("read setup send domains"));
+    const client = await connect("/mcp", await oauthToken("read setup send domains folders"));
     expect(client.getInstructions()).toContain("setup_agent_email");
     expect(client.getInstructions()).toContain("execute=true");
     expect(client.getInstructions()).not.toContain("Set up inboxes");
@@ -561,6 +564,50 @@ describe("mail folders", () => {
 });
 
 describe("mailbox tools", () => {
+  it("sends folder and scheduled-send operations to their owning inbox", async () => {
+    const client = await connect("/mcp/inbox/inbox-a", await oauthToken("read send folders"));
+    const cases = [
+      ["create_folder", { name: "Work" }, "POST", "/folders", { name: "Work" }, 201, { id: 13, name: "Work" }],
+      ["rename_folder", { folder_id: 13, name: "Work/Done" }, "PATCH", "/folders/13", { name: "Work/Done" }, 200, { id: 13, name: "Work/Done" }],
+      ["move_message", { folder_id: 13, message_id: "m/1" }, "PUT", "/messages/m%2F1/folder", { folderId: 13 }, 204, null],
+      ["restore_message", { message_id: "m/1" }, "POST", "/messages/m%2F1/restore", {}, 204, null],
+      ["delete_folder", { folder_id: 13 }, "DELETE", "/folders/13", undefined, 204, null],
+      ["list_scheduled_sends", { statuses: ["scheduled", "failed"] }, "GET", "/scheduled-sends?status=scheduled,failed", undefined, 200, { data: [{ id: "s", status: "failed" }] }],
+      ["reschedule_scheduled_send", { send_id: "s", send_at: "2027-01-01T12:00:00Z" }, "PATCH", "/scheduled-sends/s", { sendAt: "2027-01-01T12:00:00Z" }, 200, { id: "s", status: "scheduled" }],
+      ["cancel_scheduled_send", { send_id: "s" }, "DELETE", "/scheduled-sends/s", undefined, 200, { id: "s", status: "cancelled" }],
+    ] as const;
+    for (const [name, args, method, suffix, body, status, result] of cases) {
+      const path = "/v1/inboxes/inbox-a" + suffix;
+      api.state.mailboxResponse = { method, path, status, result };
+      const reply = await call(client, name, args);
+      expect(reply.isError, name).toBe(false);
+      expect(JSON.parse(reply.text)).toEqual(result ?? { ok: true });
+      expect(api.requests.at(-1)).toMatchObject({ method, path, body });
+      const count = api.requests.length;
+      expect((await call(client, name, { ...args, inbox_id: "inbox-b" })).isError).toBe(true);
+      expect(api.requests.slice(count).every(req => req.path === "/v1/me")).toBe(true);
+    }
+  });
+
+  it("schedules direct sends and replies and reports the queued receipt", async () => {
+    const client = await connect("/mcp/inbox/inbox-a", await oauthToken("read send"));
+    const send_at = "2027-01-01T08:00:00Z";
+    for (const [name, args] of [
+      ["send_email", { to: "sam@example.com", subject: "Reminder" }],
+      ["reply_to_thread", { thread_id: "thread-a1" }],
+    ] as const) {
+      const result = await call(client, name, { ...args, body: "Checking in", send_at });
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain("scheduled-1");
+      expect(result.text).toContain(send_at);
+    }
+    const sends = api.calls("POST", /\/inboxes\/inbox-a\/send$/);
+    expect(sends.map(req => req.body)).toEqual([
+      expect.objectContaining({ sendAt: send_at, to: "sam@example.com" }),
+      expect.objectContaining({ sendAt: send_at, threadId: "thread-a1", to: "human@example.com" }),
+    ]);
+  });
+
   it("reply_to_thread posts to the thread's inbox with the inbound sender and threadId", async () => {
     const client = await connect("/mcp", ACCOUNT_KEY);
     const result = await call(client, "reply_to_thread", { thread_id: "thread-a1", body: "Attached below." });
@@ -1039,7 +1086,7 @@ describe("mailbox tools", () => {
   // An OAuth session is a person's chat. A raw key returned there is exposed to
   // the transcript the moment it is minted, and the session does not need one.
   it("setup_agent_email over OAuth creates the inbox but never mints or prints a key", async () => {
-    const client = await connect("/mcp", await oauthToken("read setup send domains"));
+    const client = await connect("/mcp", await oauthToken("read setup send domains folders"));
     const result = await call(client, "setup_agent_email", { execute: true, mailboxName: "helper" });
     expect(result.isError).toBe(false);
     expect(result.text).toContain("helper@omail.sh");
@@ -1050,7 +1097,7 @@ describe("mailbox tools", () => {
   });
 
   it("mint_inbox_key over OAuth points to the console instead of returning a token", async () => {
-    const client = await connect("/mcp", await oauthToken("read setup send domains"));
+    const client = await connect("/mcp", await oauthToken("read setup send domains folders"));
     const result = await call(client, "mint_inbox_key", { inbox_id: "inbox-1" });
     expect(result.isError).toBe(false);
     expect(result.text).not.toContain("om_");

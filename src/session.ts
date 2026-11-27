@@ -24,6 +24,14 @@ export const ALL_TOOLS = [
   "get_inbox",
   "list_folders",
   "list_folder_messages",
+  "create_folder",
+  "rename_folder",
+  "delete_folder",
+  "move_message",
+  "restore_message",
+  "list_scheduled_sends",
+  "reschedule_scheduled_send",
+  "cancel_scheduled_send",
   "create_inbox",
   "mint_inbox_key",
   "send_email",
@@ -115,12 +123,16 @@ export function visibleTools(ctx: SessionContext): ToolName[] {
 
   if (ctx.toolsets.has("mailbox")) {
     if (!inboxLocked) tools.push("list_inboxes");
-    tools.push("list_folders", "list_folder_messages");
+    tools.push("list_folders", "list_folder_messages", "list_scheduled_sends");
+    if (!ctx.readonly && hasScope(ctx, "folders")) {
+      tools.push("create_folder", "rename_folder", "delete_folder", "move_message");
+      if (!ctx.apiKeyInboxId) tools.push("restore_message");
+    }
     tools.push("get_inbox", "list_unread_threads", "read_thread", "get_attachment", "get_attachment_text", "search_mail", "list_drafts", "get_draft");
     // Marking read is a write (PATCH /v1/threads/:id); readonly sessions get none.
     if (!ctx.readonly) tools.push("mark_thread_read");
     if (!ctx.readonly && hasScope(ctx, "send")) {
-      tools.push("send_email", "reply_to_thread", "forward_message", "create_draft", "edit_draft", "send_draft", "delete_draft");
+      tools.push("reschedule_scheduled_send", "cancel_scheduled_send", "send_email", "reply_to_thread", "forward_message", "create_draft", "edit_draft", "send_draft", "delete_draft");
     }
     // The API refuses these to OAuth tokens (no consent scope covers them)
     // and to scoped keys, so only list them where they can succeed.

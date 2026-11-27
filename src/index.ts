@@ -38,7 +38,7 @@ function resourceMetadata() {
     resource,
     authorization_servers: [mcpIssuer()],
     bearer_tokens_supported: true,
-    scopes_supported: ["read", "setup", "send", "domains"],
+    scopes_supported: ["read", "setup", "send", "domains", "folders"],
     resource_documentation: "https://docs.openmail.sh",
   };
 }
