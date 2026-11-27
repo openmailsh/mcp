@@ -332,11 +332,16 @@ describe("setup permission guidance", () => {
   });
 });
 
-describe("stale mail and domain tool calls", () => {
+describe("stale mail, folder and domain tool calls", () => {
   const writes = [
     { name: "send_email", args: { inbox_id: "inbox-a", to: "human@example.com", subject: "Hello", body: "Hi" }, consent: "Send mail" },
     { name: "create_draft", args: { inbox_id: "inbox-a", body: "Legacy body" }, consent: "Send mail" },
     { name: "send_draft", args: { draft_id: "draft-1", updated_at: "2026-09-10T10:00:00Z" }, consent: "Send mail" },
+    { name: "create_folder", args: { name: "Work" }, consent: "Manage folders" },
+    { name: "rename_folder", args: { folder_id: 42, name: "Filed" }, consent: "Manage folders" },
+    { name: "delete_folder", args: { folder_id: 42 }, consent: "Manage folders" },
+    { name: "move_message", args: { message_id: "m", folder_id: 42 }, consent: "Manage folders" },
+    { name: "restore_message", args: { message_id: "m" }, consent: "Manage folders" },
     { name: "add_domain", args: { domain: "mail.example.com" }, consent: "Domains" },
   ];
 
@@ -364,7 +369,7 @@ describe("stale mail and domain tool calls", () => {
         expect(names).not.toContain(name);
         const result = await call(client, name, args);
         expect(result.isError, name).toBe(true);
-        expect(result.text, name).not.toMatch(/enable ["“]?(Send mail|Domains)|missing (the )?(send|domains) permission/i);
+        expect(result.text, name).not.toMatch(/enable ["“]?(Send mail|Domains|Manage folders)|missing (the )?(send|domains|folders) permission/i);
         expect(result.text, name).not.toContain("body_html");
       }
       expect(api.requests.every(({ method, path }) => method === "GET" && path === "/v1/me")).toBe(true);

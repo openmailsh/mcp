@@ -111,13 +111,13 @@ export function sessionToolAccess(ctx: SessionContext) {
   if (ctx.authKind === "none") return { tools, missingConsent };
 
   // Record a consent hint only where this scope would make the tool available.
-  function addWrites(scope: "send" | "domains", ...names: ToolName[]) {
+  const consentLabels = { send: "Send mail", domains: "Domains", folders: "Manage folders" } as const;
+  function addWrites(scope: keyof typeof consentLabels, ...names: ToolName[]) {
     if (ctx.readonly) return;
     if (hasScope(ctx, scope)) {
       tools.push(...names);
     } else if (ctx.authKind === "oauth") {
-      const label = scope === "send" ? "Send mail" : "Domains";
-      for (const name of names) missingConsent.set(name, label);
+      for (const name of names) missingConsent.set(name, consentLabels[scope]);
     }
   }
 
@@ -136,10 +136,8 @@ export function sessionToolAccess(ctx: SessionContext) {
   if (ctx.toolsets.has("mailbox")) {
     if (!inboxLocked) tools.push("list_inboxes");
     tools.push("list_folders", "list_folder_messages", "list_scheduled_sends");
-    if (!ctx.readonly && hasScope(ctx, "folders")) {
-      tools.push("create_folder", "rename_folder", "delete_folder", "move_message");
-      if (!ctx.apiKeyInboxId) tools.push("restore_message");
-    }
+    addWrites("folders", "create_folder", "rename_folder", "delete_folder", "move_message");
+    if (!ctx.apiKeyInboxId) addWrites("folders", "restore_message");
     tools.push("get_inbox", "list_unread_threads", "read_thread", "get_attachment", "get_attachment_text", "search_mail", "list_drafts", "get_draft");
     // Marking read is a write (PATCH /v1/threads/:id); readonly sessions get none.
     if (!ctx.readonly) tools.push("mark_thread_read");
